@@ -66,6 +66,11 @@ logger = logging.getLogger()
 
 def main(args, resume_preempt=False):
 
+    dataset_name = args['data'].get('dataset_name', 'imagenet1k')
+    if dataset_name == 'pathology_cross_resolution_wsi':
+        from src.train_pathology_cross_resolution_jepa import main as pathology_main
+        return pathology_main(args=args, resume_preempt=resume_preempt)
+
     # ----------------------------------------------------------------------- #
     #  PASSED IN PARAMS FROM CONFIG FILE
     # ----------------------------------------------------------------------- #
