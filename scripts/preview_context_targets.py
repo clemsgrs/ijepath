@@ -2,17 +2,23 @@
 import argparse
 import csv
 import math
+import re
 import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
+from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.datasets.pathology_cross_resolution_wsi_dataset import PathologyCrossResolutionWSIDataset
+from src.datasets.wsi_readers.wholeslidedata_reader_adapter import (
+    WholeSlideDataReaderAdapter,
+    spacing_pixels_to_level0_pixels,
+)
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -45,6 +51,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wsi-backend", type=str, default="openslide")
     parser.add_argument("--context-display-size", type=int, default=560)
     parser.add_argument("--target-tile-size", type=int, default=180)
+    parser.add_argument("--thumbnail-max-side", type=int, default=1024)
+    parser.add_argument(
+        "--final-png-scale",
+        type=float,
+        default=2.0,
+        help="Scale factor for final all-steps PNG (set <=0 to disable).",
+    )
+    parser.add_argument(
+        "--num-zoomed-previews",
+        type=int,
+        default=2,
+        help="Number of first samples for which to emit zoomed 4-panel static previews.",
+    )
+    parser.add_argument(
+        "--zoomed-preview-scale",
+        type=float,
+        default=1.0,
+        help="Scale factor applied to zoomed 4-panel previews.",
+    )
     return parser.parse_args()
 
 
@@ -61,11 +86,32 @@ def read_profile_from_anchor_catalog(anchor_catalog: Path) -> dict:
     }
 
 
+def read_anchor_rows(anchor_catalog: Path) -> dict[str, dict]:
+    rows: dict[str, dict] = {}
+    with anchor_catalog.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows[str(row["anchor_id"])] = dict(row)
+    return rows
+
+
 def tensor_to_rgb_uint8(tensor_image: np.ndarray) -> np.ndarray:
     array = tensor_image.detach().cpu().numpy().transpose(1, 2, 0)
     array = (array * IMAGENET_STD[None, None, :]) + IMAGENET_MEAN[None, None, :]
     array = np.clip(array, 0.0, 1.0)
     return (array * 255.0).astype(np.uint8)
+
+
+def array_to_rgb_uint8(image: np.ndarray) -> np.ndarray:
+    if image.ndim == 2:
+        image = np.repeat(image[..., None], 3, axis=2)
+    if image.shape[2] == 1:
+        image = np.repeat(image, 3, axis=2)
+    if image.shape[2] > 3:
+        image = image[..., :3]
+    if image.dtype != np.uint8:
+        image = np.clip(image, 0, 255).astype(np.uint8)
+    return image
 
 
 def put_text(
@@ -86,55 +132,6 @@ def put_text(
         thickness,
         cv2.LINE_AA,
     )
-
-
-def wrap_text(text: str, max_width: int, scale: float, thickness: int) -> list[str]:
-    if not text:
-        return []
-    words = text.split()
-    lines = []
-    current = words[0]
-    for word in words[1:]:
-        candidate = f"{current} {word}"
-        (w, _), _ = cv2.getTextSize(candidate, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
-        if w <= max_width:
-            current = candidate
-        else:
-            lines.append(current)
-            current = word
-    lines.append(current)
-    return lines
-
-
-def draw_wrapped_header(
-    canvas: np.ndarray,
-    title: str,
-    subtitle: str,
-    x: int,
-    y: int,
-    max_width: int,
-) -> int:
-    title_scale = 0.72
-    sub_scale = 0.5
-    title_thick = 2
-    sub_thick = 1
-    line_gap = 8
-
-    title_lines = wrap_text(title, max_width=max_width, scale=title_scale, thickness=title_thick)
-    sub_lines = wrap_text(subtitle, max_width=max_width, scale=sub_scale, thickness=sub_thick)
-
-    cursor_y = y
-    for line in title_lines:
-        put_text(canvas, line, (x, cursor_y), (18, 18, 18), scale=title_scale, thickness=title_thick)
-        (_, h), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, title_scale, title_thick)
-        cursor_y += h + line_gap
-
-    for line in sub_lines:
-        put_text(canvas, line, (x, cursor_y), (85, 85, 85), scale=sub_scale, thickness=sub_thick)
-        (_, h), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, sub_scale, sub_thick)
-        cursor_y += h + 5
-
-    return cursor_y
 
 
 def draw_target_boxes(
@@ -165,13 +162,489 @@ def scale_boxes(boxes_xyxy: np.ndarray, scale: float) -> np.ndarray:
     return boxes_xyxy * float(scale)
 
 
-def safe_crop(image: np.ndarray, box_xyxy: np.ndarray) -> np.ndarray:
-    x0, y0, x1, y1 = [int(round(v)) for v in box_xyxy.tolist()]
-    x0 = max(0, min(image.shape[1] - 1, x0))
-    y0 = max(0, min(image.shape[0] - 1, y0))
-    x1 = max(x0 + 1, min(image.shape[1], x1))
-    y1 = max(y0 + 1, min(image.shape[0], y1))
-    return image[y0:y1, x0:x1]
+def safe_clip_box(box_xyxy: np.ndarray, width: int, height: int) -> np.ndarray:
+    x0, y0, x1, y1 = [float(v) for v in box_xyxy.tolist()]
+    x0 = min(max(x0, 0.0), float(width - 1))
+    y0 = min(max(y0, 0.0), float(height - 1))
+    x1 = min(max(x1, x0 + 1.0), float(width))
+    y1 = min(max(y1, y0 + 1.0), float(height))
+    return np.array([x0, y0, x1, y1], dtype=np.float32)
+
+
+def _draw_anchor_on_thumbnail(
+    thumbnail_rgb: np.ndarray,
+    anchor_box_xyxy: np.ndarray,
+    color: tuple[int, int, int] = (0, 0, 0),
+) -> np.ndarray:
+    out = thumbnail_rgb.copy()
+    box = safe_clip_box(anchor_box_xyxy, width=out.shape[1], height=out.shape[0])
+    x0, y0, x1, y1 = [int(round(v)) for v in box.tolist()]
+    cv2.rectangle(out, (x0, y0), (x1, y1), color, 1)
+    return out
+
+
+def _compute_anchor_box_in_thumbnail(
+    anchor_row: dict,
+    thumbnail_width: int,
+    thumbnail_height: int,
+    level0_width: int,
+    level0_height: int,
+    context_mpp: float | None = None,
+    context_fov_um: float | None = None,
+) -> np.ndarray:
+    center_x_level0 = int(float(anchor_row["center_x_level0"]))
+    center_y_level0 = int(float(anchor_row["center_y_level0"]))
+    eff_context_mpp = float(anchor_row["context_mpp"]) if context_mpp is None else float(context_mpp)
+    eff_context_fov_um = float(anchor_row["context_fov_um"]) if context_fov_um is None else float(context_fov_um)
+    context_size_px = max(1, int(round(eff_context_fov_um / eff_context_mpp)))
+    wsi_level0_spacing_mpp = float(anchor_row["wsi_level0_spacing_mpp"])
+
+    context_size_level0 = spacing_pixels_to_level0_pixels(
+        size_pixels_at_spacing=context_size_px,
+        spacing=eff_context_mpp,
+        spacing_at_level0=wsi_level0_spacing_mpp,
+    )
+    x0_l0 = center_x_level0 - context_size_level0 // 2
+    y0_l0 = center_y_level0 - context_size_level0 // 2
+    x1_l0 = x0_l0 + context_size_level0
+    y1_l0 = y0_l0 + context_size_level0
+
+    sx = float(thumbnail_width) / float(level0_width)
+    sy = float(thumbnail_height) / float(level0_height)
+    box = np.array(
+        [x0_l0 * sx, y0_l0 * sy, x1_l0 * sx, y1_l0 * sy],
+        dtype=np.float32,
+    )
+    return safe_clip_box(box, width=thumbnail_width, height=thumbnail_height)
+
+
+def _thumbnail_from_wsi_row(
+    anchor_row: dict,
+    backend: str,
+    max_side: int,
+    thumbnail_cache: dict[str, dict],
+    context_mpp: float | None = None,
+    context_fov_um: float | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    slide_id = str(anchor_row["slide_id"])
+    cached = thumbnail_cache.get(slide_id)
+    if cached is None:
+        reader = WholeSlideDataReaderAdapter(
+            wsi_path=anchor_row["wsi_path"],
+            mask_path=None,
+            backend=backend,
+        )
+        level = len(reader.wsi_spacings) - 1
+        spacing = float(reader.wsi_spacings[level])
+        level_shape = reader.wsi_shapes[level]
+        width = int(level_shape[0])
+        height = int(level_shape[1])
+        patch = reader.wsi.get_patch(0, 0, width, height, spacing=spacing, center=False)
+        thumbnail = array_to_rgb_uint8(np.asarray(patch))
+        geometry = reader.geometry
+
+        max_side = max(64, int(max_side))
+        h, w = thumbnail.shape[:2]
+        scale = min(1.0, float(max_side) / float(max(h, w)))
+        if scale < 1.0:
+            new_w = max(1, int(round(w * scale)))
+            new_h = max(1, int(round(h * scale)))
+            thumbnail = cv2.resize(thumbnail, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        cached = {
+            "thumbnail": thumbnail,
+            "level0_width": int(geometry.level0_width),
+            "level0_height": int(geometry.level0_height),
+        }
+        thumbnail_cache[slide_id] = cached
+
+    anchor_box = _compute_anchor_box_in_thumbnail(
+        anchor_row=anchor_row,
+        thumbnail_width=cached["thumbnail"].shape[1],
+        thumbnail_height=cached["thumbnail"].shape[0],
+        level0_width=cached["level0_width"],
+        level0_height=cached["level0_height"],
+        context_mpp=context_mpp,
+        context_fov_um=context_fov_um,
+    )
+    return cached["thumbnail"], anchor_box
+
+
+def _make_predictor_single_query_view(
+    context_rgb: np.ndarray,
+    target_box_xyxy: np.ndarray,
+    query_index: int,
+) -> np.ndarray:
+    out = context_rgb.copy()
+    color = TARGET_COLORS[query_index % len(TARGET_COLORS)]
+    x0, y0, x1, y1 = [int(round(v)) for v in target_box_xyxy.tolist()]
+    x0 = max(0, min(out.shape[1] - 1, x0))
+    y0 = max(0, min(out.shape[0] - 1, y0))
+    x1 = max(x0 + 1, min(out.shape[1], x1))
+    y1 = max(y0 + 1, min(out.shape[0], y1))
+
+    patch = out[y0:y1, x0:x1]
+    muted = cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY)
+    muted = np.repeat(muted[..., None], 3, axis=2)
+    muted = cv2.addWeighted(muted, 0.72, np.full_like(muted, 214), 0.28, 0)
+    out[y0:y1, x0:x1] = muted
+
+    cv2.rectangle(out, (x0, y0), (x1, y1), color, 3)
+    cx = (x0 + x1) // 2
+    cy = (y0 + y1) // 2
+    cv2.circle(out, (cx, cy), 14, color, -1)
+    put_text(out, f"Q{query_index + 1}", (cx - 10, cy + 6), (255, 255, 255), scale=0.5, thickness=1)
+    return out
+
+
+def _make_predictor_query_grid(
+    context_rgb: np.ndarray,
+    boxes_xyxy: np.ndarray,
+    tile_size: int,
+) -> np.ndarray:
+    n = len(boxes_xyxy)
+    cols = int(math.ceil(math.sqrt(n)))
+    rows = int(math.ceil(n / cols))
+    gap = 12
+
+    grid_h = rows * tile_size + (rows - 1) * gap
+    grid_w = cols * tile_size + (cols - 1) * gap
+    grid = np.full((grid_h, grid_w, 3), 246, dtype=np.uint8)
+
+    for idx, box in enumerate(boxes_xyxy):
+        color = TARGET_COLORS[idx % len(TARGET_COLORS)]
+        view = _make_predictor_single_query_view(context_rgb=context_rgb, target_box_xyxy=box, query_index=idx)
+        tile = cv2.resize(view, (tile_size, tile_size), interpolation=cv2.INTER_LINEAR)
+        r = idx // cols
+        c = idx % cols
+        y0 = r * (tile_size + gap)
+        x0 = c * (tile_size + gap)
+        grid[y0 : y0 + tile_size, x0 : x0 + tile_size] = tile
+        cv2.rectangle(grid, (x0, y0), (x0 + tile_size, y0 + tile_size), color, 4)
+        cv2.rectangle(grid, (x0, y0), (x0 + 54, y0 + 22), color, -1)
+        put_text(grid, f"T{idx + 1}/Q{idx + 1}", (x0 + 5, y0 + 16), (255, 255, 255), scale=0.45, thickness=1)
+
+    return grid
+
+
+def _format_anchor_display_name(anchor_id: str) -> str:
+    match = re.search(r"_(\d+)$", str(anchor_id))
+    if match:
+        return f"A{int(match.group(1)) + 1:03d}"
+    return str(anchor_id)
+
+
+def _sanitize_filename_token(token: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", str(token).strip())
+    cleaned = re.sub(r"-{2,}", "-", cleaned).strip("-")
+    return cleaned or "x"
+
+
+def build_output_stem(sample_index: int, slide_id: str, anchor_id: str) -> str:
+    slide_token = _sanitize_filename_token(slide_id)
+    anchor_token = _sanitize_filename_token(_format_anchor_display_name(anchor_id))
+    return f"s{int(sample_index):03d}_{slide_token}_{anchor_token}"
+
+
+def _fit_image_with_transform(
+    image_rgb: np.ndarray,
+    box_w: int,
+    box_h: int,
+    bg_color: int = 248,
+) -> tuple[np.ndarray, int, int, float]:
+    canvas = np.full((box_h, box_w, 3), bg_color, dtype=np.uint8)
+    h, w = image_rgb.shape[:2]
+    if h <= 0 or w <= 0:
+        return canvas, 0, 0, 1.0
+    scale = min(float(box_w) / float(w), float(box_h) / float(h))
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+    resized = cv2.resize(image_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR)
+    ox = (box_w - new_w) // 2
+    oy = (box_h - new_h) // 2
+    canvas[oy : oy + new_h, ox : ox + new_w] = resized
+    return canvas, ox, oy, scale
+
+
+def _compose_flow_frame(
+    wsi_with_anchor_rgb: np.ndarray,
+    step_images_rgb: list[np.ndarray],
+    reveal_alphas: list[float],
+    slot_titles: list[str],
+    sample_metadata: dict,
+) -> np.ndarray:
+    frame_w = 1536
+    frame_h = 900
+
+    gradient = np.linspace(246, 236, frame_h, dtype=np.uint8)[:, None]
+    frame = np.stack(
+        [
+            np.repeat(gradient, frame_w, axis=1),
+            np.repeat(gradient, frame_w, axis=1),
+            np.repeat(gradient, frame_w, axis=1),
+        ],
+        axis=2,
+    )
+
+    margin = 24
+    left_x = margin
+    left_y = 92
+    left_w = 700
+    left_h = 780
+
+    slot_w = 372
+    slot_h = 376
+    gap_x = 16
+    gap_y = 28
+    right_x0 = 752
+    right_y0 = 92
+
+    slot_positions = [
+        (right_x0, right_y0),  # Context
+        (right_x0 + slot_w + gap_x, right_y0),  # Target boxes
+        (right_x0, right_y0 + slot_h + gap_y),  # Target crops
+        (right_x0 + slot_w + gap_x, right_y0 + slot_h + gap_y),  # Predictor
+    ]
+
+    left_placeholder = np.full((left_h, left_w, 3), 246, dtype=np.uint8)
+    cv2.rectangle(left_placeholder, (0, 0), (left_w - 1, left_h - 1), (214, 214, 214), 1)
+    put_text(left_placeholder, "1) WSI + anchor", (12, 24), (58, 58, 58), scale=0.50, thickness=1)
+    left_content, _, _, _ = _fit_image_with_transform(
+        image_rgb=wsi_with_anchor_rgb,
+        box_w=left_w - 8,
+        box_h=left_h - 42,
+    )
+    left_placeholder[34 : 34 + left_content.shape[0], 4 : 4 + left_content.shape[1]] = left_content
+    frame[left_y : left_y + left_h, left_x : left_x + left_w] = left_placeholder
+
+    for idx, (sx, sy) in enumerate(slot_positions):
+        placeholder = np.full((slot_h, slot_w, 3), 246, dtype=np.uint8)
+        cv2.rectangle(placeholder, (0, 0), (slot_w - 1, slot_h - 1), (222, 222, 222), 1)
+        put_text(placeholder, slot_titles[idx], (12, 24), (126, 126, 126), scale=0.50, thickness=1)
+
+        alpha = float(max(0.0, min(1.0, reveal_alphas[idx])))
+        if alpha > 0.0:
+            panel, _, _, _ = _fit_image_with_transform(step_images_rgb[idx], box_w=slot_w - 8, box_h=slot_h - 42)
+            panel_full = np.full((slot_h, slot_w, 3), 246, dtype=np.uint8)
+            panel_full[34 : 34 + panel.shape[0], 4 : 4 + panel.shape[1]] = panel
+            cv2.rectangle(panel_full, (0, 0), (slot_w - 1, slot_h - 1), (214, 214, 214), 1)
+            put_text(panel_full, slot_titles[idx], (12, 22), (58, 58, 58), scale=0.50, thickness=1)
+            if alpha < 1.0:
+                panel_full = cv2.addWeighted(panel_full, alpha, placeholder, 1.0 - alpha, 0)
+            frame[sy : sy + slot_h, sx : sx + slot_w] = panel_full
+        else:
+            frame[sy : sy + slot_h, sx : sx + slot_w] = placeholder
+
+    anchor_name = _format_anchor_display_name(sample_metadata["anchor_id"])
+    put_text(
+        frame,
+        "Cross-resolution context-to-target correspondence",
+        (margin, 40),
+        (24, 24, 24),
+        scale=0.72,
+        thickness=2,
+    )
+    put_text(
+        frame,
+        f"slide = {sample_metadata['slide_id']}",
+        (margin, 62),
+        (80, 80, 80),
+        scale=0.46,
+        thickness=1,
+    )
+    put_text(
+        frame,
+        f"anchor = {anchor_name}",
+        (margin, 74),
+        (80, 80, 80),
+        scale=0.46,
+        thickness=1,
+    )
+    return frame
+
+
+def build_flow_step_views(
+    context_rgb: np.ndarray,
+    boxes_xyxy: np.ndarray,
+    target_images_rgb: list[np.ndarray],
+    sample_metadata: dict,
+    context_display_size: int,
+    target_tile_size: int,
+) -> tuple[list[np.ndarray], list[str]]:
+    context_size = max(360, int(round(context_display_size * 0.78)))
+    context = cv2.resize(context_rgb, (context_size, context_size), interpolation=cv2.INTER_LINEAR)
+    scale = float(context_size) / float(context_rgb.shape[0])
+    boxes_scaled = scale_boxes(boxes_xyxy, scale)
+    context_with_box = context.copy()
+    cv2.rectangle(
+        context_with_box,
+        (2, 2),
+        (context_with_box.shape[1] - 3, context_with_box.shape[0] - 3),
+        (0, 0, 0),
+        2,
+    )
+    targets_overlay = draw_target_boxes(context.copy(), boxes_scaled, fill_alpha=0.25)
+    target_grid, _, _ = make_target_grid(target_images_rgb, tile_size=max(105, min(target_tile_size, 176)))
+    predictor_grid = _make_predictor_query_grid(
+        context_rgb=context,
+        boxes_xyxy=boxes_scaled,
+        tile_size=max(130, min(188, context_size // 2)),
+    )
+
+    out_ctx = float(sample_metadata.get("output_context_mpp", sample_metadata.get("requested_context_mpp")))
+    out_tgt = float(sample_metadata.get("output_target_mpp", sample_metadata.get("requested_target_mpp")))
+    right_views = [
+        context_with_box,
+        targets_overlay,
+        target_grid,
+        predictor_grid,
+    ]
+    slot_titles = [
+        f"2) Context ({out_ctx:.2f} mpp)",
+        "3) Sampling valid targets",
+        f"4) Targets ({out_tgt:.2f} mpp)",
+        "5) Predictor input (per target)",
+    ]
+    return right_views, slot_titles
+
+
+def make_zoomed_four_panel_figure(
+    step_images_rgb: list[np.ndarray],
+    slot_titles: list[str],
+    sample_metadata: dict,
+) -> np.ndarray:
+    if len(step_images_rgb) != 4 or len(slot_titles) != 4:
+        raise ValueError("step_images_rgb and slot_titles must both have length 4")
+
+    panel_w = 1080
+    panel_h = 820
+    gap_x = 28
+    gap_y = 28
+    margin = 26
+    title_h = 88
+
+    fig_w = margin * 2 + panel_w * 2 + gap_x
+    fig_h = title_h + panel_h * 2 + gap_y + margin
+    fig = np.full((fig_h, fig_w, 3), 246, dtype=np.uint8)
+
+    anchor_name = _format_anchor_display_name(sample_metadata["anchor_id"])
+    put_text(
+        fig,
+        "Cross-resolution context-to-target correspondence",
+        (margin, 40),
+        (24, 24, 24),
+        scale=0.82,
+        thickness=2,
+    )
+    put_text(
+        fig,
+        f"slide = {sample_metadata['slide_id']}    anchor = {anchor_name}",
+        (margin, 66),
+        (88, 88, 88),
+        scale=0.5,
+        thickness=1,
+    )
+
+    positions = [
+        (margin, title_h),
+        (margin + panel_w + gap_x, title_h),
+        (margin, title_h + panel_h + gap_y),
+        (margin + panel_w + gap_x, title_h + panel_h + gap_y),
+    ]
+
+    for idx, (x0, y0) in enumerate(positions):
+        panel = np.full((panel_h, panel_w, 3), 246, dtype=np.uint8)
+        cv2.rectangle(panel, (0, 0), (panel_w - 1, panel_h - 1), (214, 214, 214), 1)
+        put_text(panel, slot_titles[idx], (18, 30), (58, 58, 58), scale=0.62, thickness=1)
+        image, _, _, _ = _fit_image_with_transform(
+            image_rgb=step_images_rgb[idx],
+            box_w=panel_w - 16,
+            box_h=panel_h - 54,
+        )
+        panel[44 : 44 + image.shape[0], 8 : 8 + image.shape[1]] = image
+        fig[y0 : y0 + panel_h, x0 : x0 + panel_w] = panel
+    return fig
+
+
+def build_ijepath_animation_frames(
+    thumbnail_rgb: np.ndarray,
+    anchor_box_thumbnail_xyxy: np.ndarray,
+    context_rgb: np.ndarray,
+    boxes_xyxy: np.ndarray,
+    target_images_rgb: list[np.ndarray],
+    sample_metadata: dict,
+    context_display_size: int,
+    target_tile_size: int,
+) -> tuple[list[np.ndarray], list[int]]:
+    frames: list[np.ndarray] = []
+    durations_ms: list[int] = []
+
+    wsi_with_anchor = _draw_anchor_on_thumbnail(thumbnail_rgb, anchor_box_thumbnail_xyxy, color=(0, 0, 0))
+    right_views, slot_titles = build_flow_step_views(
+        context_rgb=context_rgb,
+        boxes_xyxy=boxes_xyxy,
+        target_images_rgb=target_images_rgb,
+        sample_metadata=sample_metadata,
+        context_display_size=context_display_size,
+        target_tile_size=target_tile_size,
+    )
+    reveal_alphas = [0.0, 0.0, 0.0, 0.0]
+    frames.append(
+        _compose_flow_frame(
+            wsi_with_anchor_rgb=wsi_with_anchor,
+            step_images_rgb=right_views,
+            reveal_alphas=reveal_alphas,
+            slot_titles=slot_titles,
+            sample_metadata=sample_metadata,
+        )
+    )
+    durations_ms.append(1000)
+
+    blend_schedule = [0.18, 0.38, 0.58, 0.78, 1.0]
+    for slot_idx in range(len(right_views)):
+        for alpha in blend_schedule:
+            current = list(reveal_alphas)
+            current[slot_idx] = alpha
+            frames.append(
+                _compose_flow_frame(
+                    wsi_with_anchor_rgb=wsi_with_anchor,
+                    step_images_rgb=right_views,
+                    reveal_alphas=current,
+                    slot_titles=slot_titles,
+                    sample_metadata=sample_metadata,
+                )
+            )
+            durations_ms.append(1100 if alpha == 1.0 else 120)
+        reveal_alphas[slot_idx] = 1.0
+    return frames, durations_ms
+
+
+def write_gif(frames_rgb: list[np.ndarray], durations_ms: list[int], output_path: Path) -> None:
+    if not frames_rgb:
+        raise ValueError("frames_rgb must be non-empty")
+    if len(frames_rgb) != len(durations_ms):
+        raise ValueError("durations_ms length must match frames_rgb length")
+    pil_frames = [Image.fromarray(frame.astype(np.uint8), mode="RGB") for frame in frames_rgb]
+    pil_frames[0].save(
+        str(output_path),
+        save_all=True,
+        append_images=pil_frames[1:],
+        duration=[int(max(20, d)) for d in durations_ms],
+        loop=0,
+        optimize=False,
+    )
+
+
+def write_final_png(frame_rgb: np.ndarray, output_path: Path, scale: float = 2.0) -> None:
+    if scale <= 0:
+        raise ValueError("scale must be > 0")
+    out = frame_rgb
+    if abs(float(scale) - 1.0) > 1e-6:
+        new_w = max(1, int(round(frame_rgb.shape[1] * float(scale))))
+        new_h = max(1, int(round(frame_rgb.shape[0] * float(scale))))
+        interp = cv2.INTER_CUBIC if scale > 1.0 else cv2.INTER_AREA
+        out = cv2.resize(frame_rgb, (new_w, new_h), interpolation=interp)
+    cv2.imwrite(str(output_path), cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
 
 
 def make_target_grid(target_images_rgb: list[np.ndarray], tile_size: int) -> tuple[np.ndarray, int, int]:
@@ -199,278 +672,6 @@ def make_target_grid(target_images_rgb: list[np.ndarray], tile_size: int) -> tup
     return grid, rows, cols
 
 
-def mask_regions_for_context_encoder(image_rgb: np.ndarray, boxes_xyxy: np.ndarray) -> np.ndarray:
-    out = image_rgb.copy()
-    for idx, box in enumerate(boxes_xyxy):
-        color = TARGET_COLORS[idx % len(TARGET_COLORS)]
-        x0, y0, x1, y1 = [int(round(v)) for v in box.tolist()]
-
-        x0 = max(0, min(out.shape[1] - 1, x0))
-        y0 = max(0, min(out.shape[0] - 1, y0))
-        x1 = max(x0 + 1, min(out.shape[1], x1))
-        y1 = max(y0 + 1, min(out.shape[0], y1))
-
-        # Gray-out hidden target footprint without hatch artifacts.
-        patch = out[y0:y1, x0:x1]
-        muted = cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY)
-        muted = np.repeat(muted[..., None], 3, axis=2)
-        muted = cv2.addWeighted(muted, 0.72, np.full_like(muted, 214), 0.28, 0)
-        out[y0:y1, x0:x1] = muted
-
-        cv2.rectangle(out, (x0, y0), (x1, y1), color, 3)
-        put_text(out, f"T{idx + 1}", (x0 + 4, y0 + 16), color, scale=0.52, thickness=2)
-
-    return out
-
-
-def draw_query_markers(image_rgb: np.ndarray, boxes_xyxy: np.ndarray) -> np.ndarray:
-    out = image_rgb.copy()
-    for idx, box in enumerate(boxes_xyxy):
-        color = TARGET_COLORS[idx % len(TARGET_COLORS)]
-        x0, y0, x1, y1 = [int(round(v)) for v in box.tolist()]
-        cx = (x0 + x1) // 2
-        cy = (y0 + y1) // 2
-        cv2.rectangle(out, (x0, y0), (x1, y1), color, 3)
-        cv2.circle(out, (cx, cy), 14, color, -1)
-        put_text(out, f"Q{idx + 1}", (cx - 10, cy + 6), (255, 255, 255), scale=0.5, thickness=1)
-    return out
-
-
-def draw_block_title(block: np.ndarray, title: str, subtitle: str, margin_x: int = 12, margin_top: int = 28) -> int:
-    max_width = block.shape[1] - 2 * margin_x
-    end_y = draw_wrapped_header(
-        canvas=block,
-        title=title,
-        subtitle=subtitle,
-        x=margin_x,
-        y=margin_top,
-        max_width=max_width,
-    )
-    return end_y
-
-
-def add_header(canvas: np.ndarray, sample_metadata: dict, title: str):
-    slide_id = sample_metadata["slide_id"]
-    anchor_id = sample_metadata["anchor_id"]
-    out_ctx = sample_metadata.get("output_context_mpp", sample_metadata.get("requested_context_mpp"))
-    out_tgt = sample_metadata.get("output_target_mpp", sample_metadata.get("requested_target_mpp"))
-    src_ctx = sample_metadata.get("source_context_mpp", sample_metadata.get("effective_context_mpp"))
-    src_tgt = sample_metadata.get("source_target_mpp", sample_metadata.get("effective_target_mpp"))
-
-    put_text(canvas, title, (14, 30), (20, 20, 20), scale=0.95, thickness=2)
-    put_text(canvas, f"slide={slide_id}  anchor={anchor_id}", (14, 54), (50, 50, 50), scale=0.55, thickness=1)
-    put_text(
-        canvas,
-        f"output mpp: context {out_ctx:.3f}, target {out_tgt:.3f} | source-read mpp: context {src_ctx:.3f}, target {src_tgt:.3f}",
-        (14, 72),
-        (80, 80, 80),
-        scale=0.48,
-        thickness=1,
-    )
-
-
-def make_pair_figure(
-    context_rgb: np.ndarray,
-    boxes_xyxy: np.ndarray,
-    target_images_rgb: list[np.ndarray],
-    sample_metadata: dict,
-    context_display_size: int,
-    target_tile_size: int,
-) -> np.ndarray:
-    context = cv2.resize(context_rgb, (context_display_size, context_display_size), interpolation=cv2.INTER_LINEAR)
-    scale = float(context_display_size) / float(context_rgb.shape[0])
-    boxes_scaled = scale_boxes(boxes_xyxy, scale)
-    context_annot = draw_target_boxes(context, boxes_scaled, fill_alpha=0.2)
-
-    target_grid, _, _ = make_target_grid(target_images_rgb, tile_size=target_tile_size)
-
-    left_header_h = 92
-    left_panel = np.full((left_header_h + context_annot.shape[0], context_annot.shape[1], 3), 244, dtype=np.uint8)
-    draw_block_title(
-        left_panel,
-        "Context at lower resolution",
-        "Colored footprints define each target region",
-        margin_top=28,
-    )
-    left_panel[left_header_h:, :] = context_annot
-
-    right_header_h = 92
-    right_panel = np.full((right_header_h + target_grid.shape[0], target_grid.shape[1], 3), 244, dtype=np.uint8)
-    draw_block_title(
-        right_panel,
-        "Matching high-resolution targets",
-        "Same color means same spatial region",
-        margin_top=28,
-    )
-    right_panel[right_header_h:, :] = target_grid
-
-    gap = 24
-    body_h = max(left_panel.shape[0], right_panel.shape[0])
-    body_w = left_panel.shape[1] + gap + right_panel.shape[1]
-    body = np.full((body_h, body_w, 3), 236, dtype=np.uint8)
-    body[: left_panel.shape[0], : left_panel.shape[1]] = left_panel
-    body[: right_panel.shape[0], left_panel.shape[1] + gap :] = right_panel
-
-    top_h = 82
-    fig = np.full((top_h + body_h, body_w, 3), 250, dtype=np.uint8)
-    fig[top_h:, :] = body
-    add_header(fig, sample_metadata, "Cross-Resolution Context/Target Correspondence")
-    return fig
-
-
-def make_targets_grid_2x2(target_images_rgb: list[np.ndarray], tile_size: int) -> np.ndarray:
-    rows = 2
-    cols = 2
-    gap = 12
-    grid_h = rows * tile_size + (rows - 1) * gap
-    grid_w = cols * tile_size + (cols - 1) * gap
-    grid = np.full((grid_h, grid_w, 3), 248, dtype=np.uint8)
-
-    limit = min(len(target_images_rgb), rows * cols)
-    for idx in range(limit):
-        image = target_images_rgb[idx]
-        color = TARGET_COLORS[idx % len(TARGET_COLORS)]
-        tile = cv2.resize(image, (tile_size, tile_size), interpolation=cv2.INTER_LINEAR)
-        r = idx // cols
-        c = idx % cols
-        y0 = r * (tile_size + gap)
-        x0 = c * (tile_size + gap)
-        grid[y0 : y0 + tile_size, x0 : x0 + tile_size] = tile
-        cv2.rectangle(grid, (x0, y0), (x0 + tile_size, y0 + tile_size), color, 4)
-        cv2.rectangle(grid, (x0, y0), (x0 + 42, y0 + 22), color, -1)
-        put_text(grid, f"T{idx + 1}", (x0 + 6, y0 + 16), (255, 255, 255), scale=0.52, thickness=1)
-
-    return grid
-
-
-def make_ijepa_figure(
-    context_rgb: np.ndarray,
-    boxes_xyxy: np.ndarray,
-    target_images_rgb: list[np.ndarray],
-    sample_metadata: dict,
-    context_display_size: int,
-    target_tile_size: int,
-) -> np.ndarray:
-    ijepa_context_size = max(360, int(round(context_display_size * 0.68)))
-    context = cv2.resize(context_rgb, (ijepa_context_size, ijepa_context_size), interpolation=cv2.INTER_LINEAR)
-    scale = float(ijepa_context_size) / float(context_rgb.shape[0])
-    boxes_scaled = scale_boxes(boxes_xyxy, scale)
-
-    plain_context = context.copy()
-    target_overlay = draw_target_boxes(context.copy(), boxes_scaled, fill_alpha=0.2)
-    predictor_view = draw_query_markers(mask_regions_for_context_encoder(context.copy(), boxes_scaled), boxes_scaled)
-    target_tile_size = max(120, min(target_tile_size, (ijepa_context_size - 12) // 2))
-    target_grid = make_targets_grid_2x2(target_images_rgb, tile_size=target_tile_size)
-
-    block_pad = 10
-    min_header_h = 94
-
-    def make_block(img: np.ndarray, title: str, subtitle: str) -> np.ndarray:
-        block = np.full((min_header_h + img.shape[0] + block_pad, img.shape[1], 3), 245, dtype=np.uint8)
-        title_end_y = draw_block_title(block, title, subtitle, margin_top=28)
-        img_y = max(min_header_h, title_end_y + 8)
-        if img_y + img.shape[0] + block_pad > block.shape[0]:
-            new_h = img_y + img.shape[0] + block_pad
-            expanded = np.full((new_h, img.shape[1], 3), 245, dtype=np.uint8)
-            expanded[: block.shape[0], :] = block
-            block = expanded
-        block[img_y : img_y + img.shape[0], :] = img
-        return block
-
-    block_a = make_block(
-        plain_context,
-        "1) Context Crop",
-        "Raw low-resolution context region",
-    )
-    block_b = make_block(
-        target_overlay,
-        "2) Target Footprints",
-        "Prediction targets in context (T1..Tk)",
-    )
-    block_c = make_block(
-        target_grid,
-        "3) Target Encoder",
-        "High-resolution target crops (2x2 grid)",
-    )
-    block_d = make_block(
-        predictor_view,
-        "4) Predictor",
-        "Visible context + query tokens (Q1..Qk)",
-    )
-
-    block_w = max(block_a.shape[1], block_b.shape[1], block_c.shape[1], block_d.shape[1])
-    block_h = max(block_a.shape[0], block_b.shape[0], block_c.shape[0], block_d.shape[0])
-
-    def pad_block(block: np.ndarray) -> np.ndarray:
-        out = np.full((block_h, block_w, 3), 245, dtype=np.uint8)
-        x_margin = 10
-        y_margin = 10
-        x = x_margin
-        y = y_margin
-        max_w = block_w - x_margin
-        max_h = block_h - y_margin
-        h = min(block.shape[0], max_h)
-        w = min(block.shape[1], max_w)
-        block_crop = block[:h, :w]
-        out[y : y + h, x : x + w] = block_crop
-        cv2.rectangle(out, (0, 0), (block_w - 1, block_h - 1), (222, 222, 222), 1)
-        return out
-
-    block_a = pad_block(block_a)
-    block_b = pad_block(block_b)
-    block_c = pad_block(block_c)
-    block_d = pad_block(block_d)
-
-    block_gap_x = 28
-    block_gap_y = 24
-    body_h = block_h * 2 + block_gap_y
-    body_w = block_w * 2 + block_gap_x
-    body = np.full((body_h, body_w, 3), 236, dtype=np.uint8)
-
-    x_left = 0
-    x_right = block_w + block_gap_x
-    y_top = 0
-    y_bottom = block_h + block_gap_y
-
-    body[y_top : y_top + block_h, x_left : x_left + block_w] = block_a
-    body[y_top : y_top + block_h, x_right : x_right + block_w] = block_b
-    body[y_bottom : y_bottom + block_h, x_left : x_left + block_w] = block_c
-    body[y_bottom : y_bottom + block_h, x_right : x_right + block_w] = block_d
-
-    # Flow hints: 1->2, 2->4, 3->4.
-    arrow_color = (72, 72, 72)
-    cv2.arrowedLine(
-        body,
-        (x_left + block_w + 6, y_top + int(0.35 * block_h)),
-        (x_right - 8, y_top + int(0.35 * block_h)),
-        arrow_color,
-        2,
-        tipLength=0.04,
-    )
-    cv2.arrowedLine(
-        body,
-        (x_right + int(0.5 * block_w), y_top + block_h + 6),
-        (x_right + int(0.5 * block_w), y_bottom - 8),
-        arrow_color,
-        2,
-        tipLength=0.04,
-    )
-    cv2.arrowedLine(
-        body,
-        (x_left + block_w + 6, y_bottom + int(0.5 * block_h)),
-        (x_right - 8, y_bottom + int(0.5 * block_h)),
-        arrow_color,
-        2,
-        tipLength=0.04,
-    )
-
-    top_h = 82
-    fig = np.full((top_h + body_h, body_w, 3), 250, dtype=np.uint8)
-    fig[top_h:, :] = body
-    add_header(fig, sample_metadata, "I-JEPA Data Flow (Cross-Resolution Pathology)")
-    return fig
-
-
 def main() -> int:
     args = parse_args()
     anchor_catalog = Path(args.anchor_catalog).resolve()
@@ -478,6 +679,7 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     profile = read_profile_from_anchor_catalog(anchor_catalog)
+    anchor_rows = read_anchor_rows(anchor_catalog)
     context_mpp = args.context_mpp if args.context_mpp is not None else profile["context_mpp"]
     target_mpp = args.target_mpp if args.target_mpp is not None else profile["target_mpp"]
     context_fov_um = args.context_fov_um if args.context_fov_um is not None else profile["context_fov_um"]
@@ -498,41 +700,91 @@ def main() -> int:
         samples_per_epoch=max(1, args.num_samples),
     )
 
+    thumbnail_cache: dict[str, dict] = {}
     limit = min(args.num_samples, len(dataset))
     for i in range(limit):
         sample = dataset[i]
         context_rgb = tensor_to_rgb_uint8(sample["context_image"])
         target_rgbs = [tensor_to_rgb_uint8(t) for t in sample["target_images"]]
         boxes = sample["target_boxes_in_context_pixels"].detach().cpu().numpy()
+        sample_metadata = sample["sample_metadata"]
 
-        pair_fig = make_pair_figure(
-            context_rgb=context_rgb,
-            boxes_xyxy=boxes,
-            target_images_rgb=target_rgbs,
-            sample_metadata=sample["sample_metadata"],
-            context_display_size=args.context_display_size,
-            target_tile_size=args.target_tile_size,
+        anchor_id = sample_metadata["anchor_id"]
+        slide_id = sample_metadata["slide_id"]
+        anchor_row = anchor_rows.get(str(anchor_id))
+        if anchor_row is None:
+            raise KeyError(f"anchor_id={anchor_id} not found in anchor catalog {anchor_catalog}")
+
+        thumbnail_rgb, anchor_box_thumb = _thumbnail_from_wsi_row(
+            anchor_row=anchor_row,
+            backend=args.wsi_backend,
+            max_side=args.thumbnail_max_side,
+            thumbnail_cache=thumbnail_cache,
+            context_mpp=float(sample_metadata.get("output_context_mpp", context_mpp)),
+            context_fov_um=context_fov_um,
         )
-        ijepa_fig = make_ijepa_figure(
+
+        frames_rgb, durations_ms = build_ijepath_animation_frames(
+            thumbnail_rgb=thumbnail_rgb,
+            anchor_box_thumbnail_xyxy=anchor_box_thumb,
             context_rgb=context_rgb,
             boxes_xyxy=boxes,
             target_images_rgb=target_rgbs,
-            sample_metadata=sample["sample_metadata"],
+            sample_metadata=sample_metadata,
+            context_display_size=args.context_display_size,
+            target_tile_size=max(130, int(args.target_tile_size * 0.68)),
+        )
+        right_views, slot_titles = build_flow_step_views(
+            context_rgb=context_rgb,
+            boxes_xyxy=boxes,
+            target_images_rgb=target_rgbs,
+            sample_metadata=sample_metadata,
             context_display_size=args.context_display_size,
             target_tile_size=max(130, int(args.target_tile_size * 0.68)),
         )
 
-        anchor_id = sample["sample_metadata"]["anchor_id"]
-        slide_id = sample["sample_metadata"]["slide_id"]
+        output_stem = build_output_stem(
+            sample_index=i,
+            slide_id=slide_id,
+            anchor_id=anchor_id,
+        )
+        out_preview = output_dir / f"preview_{output_stem}.png"
+        out_ijepa = output_dir / f"ijepa_{output_stem}.gif"
+        out_ijepa_final = output_dir / f"ijepa_{output_stem}_all_steps.png"
+        out_zoom4 = output_dir / f"zoom4_{output_stem}.png"
 
-        out_pair = output_dir / f"pair_{i:03d}_{slide_id}_{anchor_id}.png"
-        out_ijepa = output_dir / f"ijepa_{i:03d}_{slide_id}_{anchor_id}.png"
-
-        cv2.imwrite(str(out_pair), cv2.cvtColor(pair_fig, cv2.COLOR_RGB2BGR))
-        cv2.imwrite(str(out_ijepa), cv2.cvtColor(ijepa_fig, cv2.COLOR_RGB2BGR))
+        # Plain static preview now matches the final flow layout.
+        write_final_png(
+            frame_rgb=frames_rgb[-1],
+            output_path=out_preview,
+            scale=1.0,
+        )
+        write_gif(frames_rgb=frames_rgb, durations_ms=durations_ms, output_path=out_ijepa)
+        if args.final_png_scale > 0:
+            write_final_png(
+                frame_rgb=frames_rgb[-1],
+                output_path=out_ijepa_final,
+                scale=float(args.final_png_scale),
+            )
+        if i < max(0, int(args.num_zoomed_previews)):
+            zoom4 = make_zoomed_four_panel_figure(
+                step_images_rgb=right_views,
+                slot_titles=slot_titles,
+                sample_metadata=sample_metadata,
+            )
+            write_final_png(
+                frame_rgb=zoom4,
+                output_path=out_zoom4,
+                scale=float(args.zoomed_preview_scale),
+            )
 
     print(f"wrote_previews_dir={output_dir}")
-    print("figure_types=pair,ijepa")
+    figure_types = "preview_png,ijepa_gif"
+    if args.final_png_scale > 0:
+        figure_types += ",ijepa_final_png"
+    if args.num_zoomed_previews > 0:
+        figure_types += ",zoom4_png"
+    print(f"figure_types={figure_types}")
     return 0
 
 
