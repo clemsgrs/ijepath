@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install CPU-only runtime dependencies for smoke tests.
 RUN python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install \
-      numpy<2 \
+      "numpy<2" \
       omegaconf \
       opencv-python-headless \
       openslide-python \
@@ -28,9 +28,10 @@ RUN python -m pip install --upgrade pip setuptools wheel \
       pyyaml \
       pytest \
       submitit \
-      torchvision \
-      torch --index-url https://download.pytorch.org/whl/cpu \
-    && python -m pip install wholeslidedata<0.0.16
+      "wholeslidedata<0.0.16" \
+   &&  python -m pip install --index-url https://pypi.org/simple \
+      --extra-index-url https://download.pytorch.org/whl/cpu \
+      torch torchvision
 
 COPY . /workspace
 ENV PYTHONPATH=/workspace
