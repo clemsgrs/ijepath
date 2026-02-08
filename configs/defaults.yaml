@@ -27,6 +27,7 @@ data:
   insufficient_target_policy: skip_anchor  # skip_anchor | skip_slide | lower_threshold
   min_target_tissue_fraction_floor: 0.10  # Used only when policy=lower_threshold.
   min_target_tissue_fraction_step: 0.05  # Decrement step for lower_threshold.
+  align_targets_to_patch_grid: false  # If true, sampled target boxes snap to patch-grid coordinates.
 
   # -- Spacing handling
   spacing_tolerance: 0.05  # Relative tolerance for near-native spacing matching.

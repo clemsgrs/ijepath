@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 import torch
 
+from ijepath.datasets.cross_resolution_loader_factory import make_cross_resolution_loader
 from ijepath.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
 from ijepath.datasets.wsi_readers.wholeslidedata_reader_adapter import (
     WholeSlideDataReaderAdapter,
@@ -208,6 +209,67 @@ def test_target_sampling_respects_min_tissue_fraction(tmp_path):
     assert np.all(boxes[:, 3] <= 64)
 
 
+def test_target_sampling_alignment_toggle(tmp_path):
+    dummy_csv = tmp_path / "anchors.csv"
+    _write_min_anchor_csv(
+        dummy_csv,
+        {
+            "anchor_id": "dummy_0",
+            "slide_id": "dummy",
+            "wsi_path": "/tmp/nonexistent.tif",
+            "mask_path": "",
+            "center_x_level0": 0,
+            "center_y_level0": 0,
+            "wsi_level0_spacing_mpp": 0.25,
+            "target_margin_um": 8.0,
+        },
+    )
+
+    aligned_dataset = CrossResolutionWSIDataset(
+        anchor_catalog_csv=str(dummy_csv),
+        context_mpp=1.0,
+        target_mpp=0.5,
+        context_fov_um=64.0,
+        target_fov_um=16.0,
+        patch_size=8,
+        targets_per_context=4,
+        seed=0,
+        align_targets_to_patch_grid=True,
+    )
+    sampled_aligned = aligned_dataset._sample_target_boxes_in_context(
+        rng=np.random.default_rng(0),
+        target_margin_context_px=8,
+        context_size_px=64,
+        target_size_context_px=16,
+        context_tissue_mask=None,
+    )
+    assert sampled_aligned is not None
+    aligned_boxes, _ = sampled_aligned
+    assert np.all(np.mod(aligned_boxes, 8) == 0), "Aligned mode should snap box edges to patch grid"
+
+    free_dataset = CrossResolutionWSIDataset(
+        anchor_catalog_csv=str(dummy_csv),
+        context_mpp=1.0,
+        target_mpp=0.5,
+        context_fov_um=64.0,
+        target_fov_um=16.0,
+        patch_size=8,
+        targets_per_context=4,
+        seed=0,
+        align_targets_to_patch_grid=False,
+    )
+    sampled_free = free_dataset._sample_target_boxes_in_context(
+        rng=np.random.default_rng(0),
+        target_margin_context_px=8,
+        context_size_px=64,
+        target_size_context_px=16,
+        context_tissue_mask=None,
+    )
+    assert sampled_free is not None
+    free_boxes, _ = sampled_free
+    assert not np.all(np.mod(free_boxes, 8) == 0), "Non-aligned mode should retain sub-patch offsets"
+
+
 def test_target_sampling_returns_none_when_threshold_is_impossible(tmp_path):
     dummy_csv = tmp_path / "anchors.csv"
     _write_min_anchor_csv(
@@ -246,6 +308,52 @@ def test_target_sampling_returns_none_when_threshold_is_impossible(tmp_path):
         context_tissue_mask=tissue_mask,
     )
     assert sampled is None
+
+
+def test_loader_factory_propagates_patch_alignment_toggle(tmp_path):
+    anchor_csv = tmp_path / "anchors.csv"
+    _write_min_anchor_csv(
+        anchor_csv,
+        {
+            "anchor_id": "dummy_0",
+            "slide_id": "dummy",
+            "wsi_path": "/tmp/nonexistent.tif",
+            "mask_path": "",
+            "center_x_level0": 0,
+            "center_y_level0": 0,
+            "wsi_level0_spacing_mpp": 0.25,
+            "target_margin_um": 8.0,
+        },
+    )
+
+    dataset, _, _ = make_cross_resolution_loader(
+        batch_size=1,
+        pin_mem=False,
+        num_workers=0,
+        world_size=1,
+        rank=0,
+        drop_last=False,
+        anchor_catalog_csv=str(anchor_csv),
+        patch_size=8,
+        context_mpp=1.0,
+        target_mpp=0.5,
+        context_fov_um=64.0,
+        target_fov_um=16.0,
+        targets_per_context=4,
+        seed=0,
+        spacing_tolerance=0.05,
+        min_target_tissue_fraction=0.25,
+        insufficient_target_policy="skip_anchor",
+        min_target_tissue_fraction_floor=None,
+        min_target_tissue_fraction_step=0.05,
+        min_keep=4,
+        num_enc_masks=1,
+        backend="openslide",
+        samples_per_epoch=1,
+        align_targets_to_patch_grid=True,
+    )
+
+    assert dataset.align_targets_to_patch_grid is True
 
 
 def test_rng_seed_varies_across_epochs_for_same_index(tmp_path):

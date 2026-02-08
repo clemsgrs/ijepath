@@ -32,6 +32,7 @@ def make_cross_resolution_loader(
     num_enc_masks: int,
     backend: str = "openslide",
     samples_per_epoch: int | None = None,
+    align_targets_to_patch_grid: bool = False,
 ):
     context_size_raw_px = max(1, int(round(float(context_fov_um) / float(context_mpp))))
     context_input_size_px = snap_size_to_patch_multiple(
@@ -54,6 +55,7 @@ def make_cross_resolution_loader(
         min_target_tissue_fraction_step=min_target_tissue_fraction_step,
         backend=backend,
         samples_per_epoch=samples_per_epoch,
+        align_targets_to_patch_grid=align_targets_to_patch_grid,
     )
 
     dist_sampler = DistributedSampler(

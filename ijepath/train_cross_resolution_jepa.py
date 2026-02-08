@@ -244,6 +244,7 @@ def main(
     if min_target_tissue_fraction_floor is not None:
         min_target_tissue_fraction_floor = float(min_target_tissue_fraction_floor)
     min_target_tissue_fraction_step = float(args["data"].get("min_target_tissue_fraction_step", 0.05))
+    align_targets_to_patch_grid = args["data"].get("align_targets_to_patch_grid", False)
     wsi_backend = str(args["data"].get("wsi_backend", "openslide"))
 
     # -- MASK
@@ -395,6 +396,7 @@ def main(
         num_enc_masks=num_enc_masks,
         backend=wsi_backend,
         samples_per_epoch=samples_per_epoch,
+        align_targets_to_patch_grid=align_targets_to_patch_grid,
     )
     ipe = len(unsupervised_loader)
 

@@ -1,4 +1,5 @@
 import csv
+import math
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -51,6 +52,7 @@ class CrossResolutionWSIDataset(Dataset):
         min_target_tissue_fraction_step: float = 0.05,
         backend: str = "openslide",
         samples_per_epoch: int | None = None,
+        align_targets_to_patch_grid: bool = False,
     ) -> None:
         self.anchor_catalog_csv = str(anchor_catalog_csv)
         self.context_mpp = float(context_mpp)
@@ -70,6 +72,7 @@ class CrossResolutionWSIDataset(Dataset):
             self.min_target_tissue_fraction_floor = float(min_target_tissue_fraction_floor)
         self.min_target_tissue_fraction_step = float(min_target_tissue_fraction_step)
         self.backend = backend
+        self.align_targets_to_patch_grid = align_targets_to_patch_grid
 
         valid_policies = {"skip_anchor", "skip_slide", "lower_threshold"}
         if self.insufficient_target_policy not in valid_policies:
@@ -318,19 +321,58 @@ class CrossResolutionWSIDataset(Dataset):
         if max_center < min_center:
             return None
 
+        patch = max(1, int(self.patch_size))
+
+        def _aligned_x0_bounds() -> tuple[int, int] | None:
+            half = 0.5 * float(target_size_context_px)
+            min_x0 = max(0, int(math.ceil(float(min_center) - half)))
+            max_x0 = min(
+                int(context_size_px - target_size_context_px),
+                int(math.floor(float(max_center) - half)),
+            )
+            if max_x0 < min_x0:
+                return None
+            return min_x0, max_x0
+
+        def _sample_candidate_box() -> np.ndarray | None:
+            if not self.align_targets_to_patch_grid:
+                cx = int(rng.integers(min_center, max_center + 1))
+                cy = int(rng.integers(min_center, max_center + 1))
+                return self._make_box_from_center(
+                    center_x=cx,
+                    center_y=cy,
+                    target_size_context_px=target_size_context_px,
+                )
+
+            bounds = _aligned_x0_bounds()
+            if bounds is None:
+                return None
+            min_x0, max_x0 = bounds
+            min_y0, max_y0 = bounds
+
+            start_x0 = ((min_x0 + patch - 1) // patch) * patch
+            start_y0 = ((min_y0 + patch - 1) // patch) * patch
+            if start_x0 > max_x0 or start_y0 > max_y0:
+                return None
+
+            nx = ((max_x0 - start_x0) // patch) + 1
+            ny = ((max_y0 - start_y0) // patch) + 1
+            x0 = int(start_x0 + patch * int(rng.integers(0, nx)))
+            y0 = int(start_y0 + patch * int(rng.integers(0, ny)))
+            return np.array(
+                [x0, y0, x0 + int(target_size_context_px), y0 + int(target_size_context_px)],
+                dtype=np.float32,
+            )
+
         boxes: list[np.ndarray] = []
         tissue_fractions: list[float] = []
         max_attempts = 4000
         attempts = 0
         while len(boxes) < self.targets_per_context and attempts < max_attempts:
             attempts += 1
-            cx = int(rng.integers(min_center, max_center + 1))
-            cy = int(rng.integers(min_center, max_center + 1))
-            box = self._make_box_from_center(
-                center_x=cx,
-                center_y=cy,
-                target_size_context_px=target_size_context_px,
-            )
+            box = _sample_candidate_box()
+            if box is None:
+                return None
             if not self._is_in_bounds(box, context_size_px):
                 continue
             if self._overlaps_too_much(
@@ -350,23 +392,52 @@ class CrossResolutionWSIDataset(Dataset):
 
         if len(boxes) < self.targets_per_context:
             # Deterministic fallback: evaluate a dense grid and greedily keep highest-coverage boxes.
-            grid_side = max(3, int(np.ceil(np.sqrt(self.targets_per_context * 8))))
-            centers = np.linspace(min_center, max_center, num=grid_side, dtype=np.int32)
             candidates: list[tuple[float, np.ndarray, Optional[float]]] = []
-            for cy in centers:
-                for cx in centers:
-                    box = self._make_box_from_center(
-                        center_x=int(cx),
-                        center_y=int(cy),
-                        target_size_context_px=target_size_context_px,
-                    )
-                    if not self._is_in_bounds(box, context_size_px):
-                        continue
-                    tissue_fraction = self._box_tissue_fraction(context_tissue_mask, box)
-                    if tissue_fraction is not None and tissue_fraction < threshold:
-                        continue
-                    score = 1.0 if tissue_fraction is None else float(tissue_fraction)
-                    candidates.append((score, box, tissue_fraction))
+
+            if self.align_targets_to_patch_grid:
+                bounds = _aligned_x0_bounds()
+                if bounds is not None:
+                    min_x0, max_x0 = bounds
+                    min_y0, max_y0 = bounds
+                    start_x0 = ((min_x0 + patch - 1) // patch) * patch
+                    start_y0 = ((min_y0 + patch - 1) // patch) * patch
+                    x0_values = np.arange(start_x0, max_x0 + 1, patch, dtype=np.int32)
+                    y0_values = np.arange(start_y0, max_y0 + 1, patch, dtype=np.int32)
+                    for y0 in y0_values:
+                        for x0 in x0_values:
+                            box = np.array(
+                                [
+                                    int(x0),
+                                    int(y0),
+                                    int(x0) + int(target_size_context_px),
+                                    int(y0) + int(target_size_context_px),
+                                ],
+                                dtype=np.float32,
+                            )
+                            if not self._is_in_bounds(box, context_size_px):
+                                continue
+                            tissue_fraction = self._box_tissue_fraction(context_tissue_mask, box)
+                            if tissue_fraction is not None and tissue_fraction < threshold:
+                                continue
+                            score = 1.0 if tissue_fraction is None else float(tissue_fraction)
+                            candidates.append((score, box, tissue_fraction))
+            else:
+                grid_side = max(3, int(np.ceil(np.sqrt(self.targets_per_context * 8))))
+                centers = np.linspace(min_center, max_center, num=grid_side, dtype=np.int32)
+                for cy in centers:
+                    for cx in centers:
+                        box = self._make_box_from_center(
+                            center_x=int(cx),
+                            center_y=int(cy),
+                            target_size_context_px=target_size_context_px,
+                        )
+                        if not self._is_in_bounds(box, context_size_px):
+                            continue
+                        tissue_fraction = self._box_tissue_fraction(context_tissue_mask, box)
+                        if tissue_fraction is not None and tissue_fraction < threshold:
+                            continue
+                        score = 1.0 if tissue_fraction is None else float(tissue_fraction)
+                        candidates.append((score, box, tissue_fraction))
 
             candidates.sort(key=lambda x: x[0], reverse=True)
             for _, box, tissue_fraction in candidates:
@@ -532,6 +603,7 @@ class CrossResolutionWSIDataset(Dataset):
                 else [float(x) for x in target_tissue_fractions.tolist()],
                 "min_target_tissue_fraction": active_threshold,
                 "configured_min_target_tissue_fraction": self.min_target_tissue_fraction,
+                "align_targets_to_patch_grid": self.align_targets_to_patch_grid,
             },
         }
 
