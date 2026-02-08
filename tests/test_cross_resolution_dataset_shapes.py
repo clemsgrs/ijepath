@@ -15,11 +15,11 @@ def test_cross_resolution_dataset_shapes_and_determinism():
 
     dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(anchor_csv),
-        crop_size=224,
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=512.0,
         target_fov_um=128.0,
+        patch_size=16,
         targets_per_context=4,
         seed=0,
         spacing_tolerance=0.05,
@@ -29,8 +29,8 @@ def test_cross_resolution_dataset_shapes_and_determinism():
     sample_a = dataset[0]
     sample_b = dataset[0]
 
-    assert sample_a["context_image"].shape == (3, 224, 224)
-    assert sample_a["target_images"].shape == (4, 3, 224, 224)
+    assert sample_a["context_image"].shape == (3, 512, 512)
+    assert sample_a["target_images"].shape == (4, 3, 256, 256)
     assert sample_a["target_boxes_in_context_pixels"].shape == (4, 4)
     assert sample_a["sample_metadata"]["anchor_id"] == sample_b["sample_metadata"]["anchor_id"]
 

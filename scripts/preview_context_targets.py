@@ -40,11 +40,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--anchor-catalog", required=True, type=str, help="Path to anchor catalog CSV")
     parser.add_argument("--output-dir", required=True, type=str, help="Directory to write previews")
     parser.add_argument("--num-samples", type=int, default=8, help="Number of samples to visualize")
-    parser.add_argument("--crop-size", type=int, default=224, help="Model crop size")
     parser.add_argument("--context-mpp", type=float, default=None)
     parser.add_argument("--target-mpp", type=float, default=None)
     parser.add_argument("--context-fov-um", type=float, default=None)
     parser.add_argument("--target-fov-um", type=float, default=None)
+    parser.add_argument("--patch-size", type=int, default=16)
     parser.add_argument("--targets-per-context", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--spacing-tolerance", type=float, default=0.05)
@@ -276,24 +276,19 @@ def _make_predictor_single_query_view(
     query_index: int,
 ) -> np.ndarray:
     out = context_rgb.copy()
-    color = TARGET_COLORS[query_index % len(TARGET_COLORS)]
+    _ = query_index
     x0, y0, x1, y1 = [int(round(v)) for v in target_box_xyxy.tolist()]
     x0 = max(0, min(out.shape[1] - 1, x0))
     y0 = max(0, min(out.shape[0] - 1, y0))
     x1 = max(x0 + 1, min(out.shape[1], x1))
     y1 = max(y0 + 1, min(out.shape[0], y1))
 
-    patch = out[y0:y1, x0:x1]
-    muted = cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY)
-    muted = np.repeat(muted[..., None], 3, axis=2)
-    muted = cv2.addWeighted(muted, 0.72, np.full_like(muted, 214), 0.28, 0)
-    out[y0:y1, x0:x1] = muted
-
-    cv2.rectangle(out, (x0, y0), (x1, y1), color, 3)
-    cx = (x0 + x1) // 2
-    cy = (y0 + y1) // 2
-    cv2.circle(out, (cx, cy), 14, color, -1)
-    put_text(out, f"Q{query_index + 1}", (cx - 10, cy + 6), (255, 255, 255), scale=0.5, thickness=1)
+    fill_x0 = min(x1, x0 + 3)
+    fill_y0 = min(y1, y0 + 3)
+    fill_x1 = max(fill_x0 + 1, x1 - 2)
+    fill_y1 = max(fill_y0 + 1, y1 - 2)
+    # Opaque black fill for explicit masked-target cue.
+    out[fill_y0:fill_y1, fill_x0:fill_x1] = 0
     return out
 
 
@@ -322,7 +317,7 @@ def _make_predictor_query_grid(
         grid[y0 : y0 + tile_size, x0 : x0 + tile_size] = tile
         cv2.rectangle(grid, (x0, y0), (x0 + tile_size, y0 + tile_size), color, 4)
         cv2.rectangle(grid, (x0, y0), (x0 + 54, y0 + 22), color, -1)
-        put_text(grid, f"T{idx + 1}/Q{idx + 1}", (x0 + 5, y0 + 16), (255, 255, 255), scale=0.45, thickness=1)
+        put_text(grid, f"T{idx + 1}", (x0 + 5, y0 + 16), (255, 255, 255), scale=0.45, thickness=1)
 
     return grid
 
@@ -503,7 +498,7 @@ def build_flow_step_views(
         f"2) Context ({out_ctx:.2f} mpp)",
         "3) Sampling valid targets",
         f"4) Targets ({out_tgt:.2f} mpp)",
-        "5) Predictor input (per target)",
+        "5) Predictor input (masked target)",
     ]
     return right_views, slot_titles
 
@@ -688,11 +683,11 @@ def main() -> int:
 
     dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(anchor_catalog),
-        crop_size=args.crop_size,
         context_mpp=context_mpp,
         target_mpp=target_mpp,
         context_fov_um=context_fov_um,
         target_fov_um=target_fov_um,
+        patch_size=int(args.patch_size),
         targets_per_context=targets_per_context,
         seed=args.seed,
         spacing_tolerance=args.spacing_tolerance,

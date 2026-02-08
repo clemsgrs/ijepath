@@ -3,22 +3,24 @@ data:
   batch_size_per_gpu: 64  # global_batch_size = batch_size_per_gpu * world_size.
   pin_mem: true
   num_workers: 8
-  crop_size: 224  # Model input size for both context and target crops.
   samples_per_epoch: 200000  # With epochs=100 and global_batch_size~128, this is ~156k optimizer steps total.
   seed: 0
   wsi_backend: openslide  # Backend for wholeslidedata reader.
 
   # -- Required paths (override in run config)
-  slide_manifest_csv: null
-  slide_metadata_index_jsonl: null
-  anchor_catalog_csv: null
+  slide_manifest_csv:
+  slide_metadata_index_jsonl:
+  anchor_catalog_csv:
 
   # -- Cross-resolution geometry (override in profile config)
-  context_mpp: null
-  target_mpp: null
-  context_fov_um: null
-  target_fov_um: null
-  targets_per_context: null
+  # Final model tensor sizes are derived as nearest multiples of meta.patch_size:
+  # context_px = snap(round(context_fov_um / context_mpp), patch_size)
+  # target_px = snap(round(target_fov_um / target_mpp), patch_size)
+  context_mpp:
+  target_mpp:
+  context_fov_um:
+  target_fov_um:
+  targets_per_context:
 
   # -- Tissue-aware target sampling
   min_target_tissue_fraction: 0.25
@@ -29,34 +31,20 @@ data:
   # -- Spacing handling
   spacing_tolerance: 0.05  # Relative tolerance for near-native spacing matching.
 
-logging:
-  folder: outputs/train
-  write_tag: jepa
-
-wandb:
-  enable: false
-  project: ijepath
-  username: null
-  exp_name: null
-  tags: []
-  dir: null
-  group: null
-  resume_id: null
-
-mask:
-  patch_size: 16  # ViT patch size; used for footprint-to-token mapping.
-  num_enc_masks: 1
-  num_pred_masks: null  # Should match data.targets_per_context.
-  min_keep: 16
-
 meta:
   copy_data: false
   load_checkpoint: false
-  model_name: vit_small
+  architecture: vit_small
+  patch_size: 16  # ViT patch size used by encoder, predictor geometry, and mask tokenization.
   pred_depth: 3
   pred_emb_dim: 192
-  read_checkpoint: null
+  read_checkpoint:
   use_bfloat16: true
+
+mask:
+  num_enc_masks: 1
+  num_pred_masks:  # Should match data.targets_per_context.
+  min_keep: 16
 
 optimization:
   ema: [0.996, 1.0]
@@ -68,3 +56,17 @@ optimization:
   start_lr: 0.00002
   warmup: 0.1
   weight_decay: 0.04
+
+logging:
+  folder: outputs/train
+  write_tag: jepa
+
+wandb:
+  enable: false
+  project: ijepath
+  username: "clemsg"
+  exp_name: "ijepath"
+  tags: ["ijepath", "${meta.architecture}", "${data.context_fov_um}-to-${data.target_fov_um}"]
+  dir: /tmp/wandb
+  group:
+  resume_id:

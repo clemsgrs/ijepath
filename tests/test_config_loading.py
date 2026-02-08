@@ -30,7 +30,7 @@ def test_layered_config_merge_and_opts_override(tmp_path: Path):
                 "targets_per_context": 4,
                 "batch_size_per_gpu": 2,
             },
-            "mask": {"num_pred_masks": None, "patch_size": 16, "num_enc_masks": 1, "min_keep": 10},
+            "mask": {"num_pred_masks": None, "num_enc_masks": 1, "min_keep": 10}, "meta": {"architecture": "vit_small", "patch_size": 16},
         },
     )
     _write_yaml(
@@ -90,7 +90,7 @@ def test_layered_config_requires_required_paths(tmp_path: Path):
                 "target_fov_um": 128.0,
                 "targets_per_context": 4,
             },
-            "mask": {"num_pred_masks": 4, "patch_size": 16, "num_enc_masks": 1, "min_keep": 10},
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10}, "meta": {"architecture": "vit_small", "patch_size": 16},
         },
     )
     _write_yaml(profile_cfg, {"data": {}})
@@ -123,7 +123,7 @@ def test_layered_config_enforces_num_pred_masks_matches_targets(tmp_path: Path):
                 "target_fov_um": 128.0,
                 "targets_per_context": 4,
             },
-            "mask": {"num_pred_masks": 3, "patch_size": 16, "num_enc_masks": 1, "min_keep": 10},
+            "mask": {"num_pred_masks": 3, "num_enc_masks": 1, "min_keep": 10}, "meta": {"architecture": "vit_small", "patch_size": 16},
         },
     )
     _write_yaml(profile_cfg, {"data": {}})
@@ -156,7 +156,7 @@ def test_layered_config_rejects_conflicting_duplicate_values_within_profile(tmp_
                 "target_fov_um": 128.0,
                 "targets_per_context": 4,
             },
-            "mask": {"num_pred_masks": 4, "patch_size": 16, "num_enc_masks": 1, "min_keep": 10},
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10}, "meta": {"architecture": "vit_small", "patch_size": 16},
         },
     )
     _write_yaml(profile_cfg, {"context_mpp": 0.8, "data": {"context_mpp": 1.2}})
@@ -189,7 +189,7 @@ def test_legacy_batch_size_is_accepted_and_projected(tmp_path: Path):
                 "target_fov_um": 128.0,
                 "targets_per_context": 4,
             },
-            "mask": {"num_pred_masks": 4, "patch_size": 16, "num_enc_masks": 1, "min_keep": 10},
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10}, "meta": {"architecture": "vit_small", "patch_size": 16},
         },
     )
     _write_yaml(profile_cfg, {"data": {}})

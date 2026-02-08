@@ -96,11 +96,11 @@ def test_dataset_choose_source_spacing_prefers_finer_when_requested_missing(tmp_
 
     dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(dummy_csv),
-        crop_size=224,
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=512.0,
         target_fov_um=128.0,
+        patch_size=16,
         targets_per_context=4,
         seed=0,
         spacing_tolerance=0.05,
@@ -138,11 +138,11 @@ def test_dataset_border_anchor_sample_shapes(tmp_path):
 
     dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(anchor_csv),
-        crop_size=224,
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=512.0,
         target_fov_um=128.0,
+        patch_size=16,
         targets_per_context=4,
         seed=0,
         spacing_tolerance=0.05,
@@ -150,13 +150,13 @@ def test_dataset_border_anchor_sample_shapes(tmp_path):
     )
 
     sample = dataset[0]
-    assert sample["context_image"].shape == (3, 224, 224)
-    assert sample["target_images"].shape == (4, 3, 224, 224)
+    assert sample["context_image"].shape == (3, 512, 512)
+    assert sample["target_images"].shape == (4, 3, 256, 256)
 
     boxes = sample["target_boxes_in_context_pixels"].detach().cpu().numpy()
     assert np.isfinite(boxes).all()
     assert boxes.min() >= 0.0
-    assert boxes.max() <= 224.0
+    assert boxes.max() <= 512.0
 
 
 def test_target_sampling_respects_min_tissue_fraction(tmp_path):
@@ -176,11 +176,11 @@ def test_target_sampling_respects_min_tissue_fraction(tmp_path):
     )
     dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(dummy_csv),
-        crop_size=224,
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
         target_fov_um=16.0,
+        patch_size=16,
         targets_per_context=4,
         seed=0,
         min_target_tissue_fraction=0.5,
@@ -225,11 +225,11 @@ def test_target_sampling_returns_none_when_threshold_is_impossible(tmp_path):
     )
     dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(dummy_csv),
-        crop_size=224,
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
         target_fov_um=16.0,
+        patch_size=16,
         targets_per_context=4,
         seed=0,
         min_target_tissue_fraction=0.95,
@@ -266,11 +266,11 @@ def test_rng_seed_varies_across_epochs_for_same_index(tmp_path):
 
     dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(dummy_csv),
-        crop_size=224,
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
         target_fov_um=16.0,
+        patch_size=16,
         targets_per_context=4,
         seed=123,
     )
@@ -352,11 +352,11 @@ def test_getitem_skip_slide_policy_exhausts_slide_before_switching_slides(tmp_pa
 
     dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(anchor_csv),
-        crop_size=224,
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
         target_fov_um=16.0,
+        patch_size=16,
         targets_per_context=4,
         seed=0,
         insufficient_target_policy="skip_slide",
@@ -394,11 +394,11 @@ def test_getitem_lower_threshold_policy_relaxes_threshold_until_success(tmp_path
 
     dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(anchor_csv),
-        crop_size=224,
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
         target_fov_um=16.0,
+        patch_size=16,
         targets_per_context=4,
         seed=0,
         min_target_tissue_fraction=0.5,
@@ -441,11 +441,11 @@ def test_getitem_lower_threshold_policy_raises_if_no_threshold_works(tmp_path):
 
     dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(anchor_csv),
-        crop_size=224,
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
         target_fov_um=16.0,
+        patch_size=16,
         targets_per_context=4,
         seed=0,
         min_target_tissue_fraction=0.5,

@@ -2,7 +2,6 @@ data:
   batch_size: 2
   pin_mem: true
   num_workers: 0
-  crop_size: 224  # Model input size for both context and target crops.
   slide_manifest_csv: data/tcga-prad/manifests/tcga_prad_slides_with_tissue_masks.csv
   slide_metadata_index_jsonl: data/tcga-prad/indexes/slide_metadata_index.jsonl
   anchor_catalog_csv: data/tcga-prad/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv
@@ -26,11 +25,11 @@ mask:
   min_keep: 10
   num_enc_masks: 1
   num_pred_masks: 4  # Should match data.targets_per_context.
-  patch_size: 16  # ViT patch size; also used for footprint-to-token mask conversion.
 meta:
   copy_data: false
   load_checkpoint: false
-  model_name: vit_tiny
+  architecture: vit_tiny
+  patch_size: 16  # ViT patch size used by encoder, predictor geometry, and mask tokenization.
   pred_depth: 3
   pred_emb_dim: 192
   read_checkpoint: null

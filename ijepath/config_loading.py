@@ -191,6 +191,15 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         if value is None:
             raise ValueError(f"Missing required config value: {section}.{key}")
 
+    architecture = cfg.get("meta", {}).get("architecture")
+    if architecture is None:
+        raise ValueError("Missing required config value: meta.architecture")
+    patch_size = cfg.get("meta", {}).get("patch_size")
+    if patch_size is None:
+        raise ValueError("Missing required config value: meta.patch_size")
+    if int(patch_size) <= 0:
+        raise ValueError("meta.patch_size must be > 0")
+
     batch_size_per_gpu = cfg.get("data", {}).get("batch_size_per_gpu")
     if batch_size_per_gpu is None:
         raise ValueError("Missing required config value: data.batch_size_per_gpu")
