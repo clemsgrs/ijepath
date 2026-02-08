@@ -10,8 +10,8 @@ import torch.nn.functional as F
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 
-from src.datasets.pathology_cross_resolution_loader_factory import (
-    make_pathology_cross_resolution_loader,
+from src.datasets.cross_resolution_loader_factory import (
+    make_cross_resolution_loader,
 )
 from src.helper import init_model, init_opt, load_checkpoint
 from src.utils.distributed import AllReduce, init_distributed
@@ -174,7 +174,7 @@ def main(args, resume_preempt: bool = False):
     )
     target_encoder = copy.deepcopy(encoder)
 
-    unsupervised_dataset, unsupervised_loader, unsupervised_sampler = make_pathology_cross_resolution_loader(
+    unsupervised_dataset, unsupervised_loader, unsupervised_sampler = make_cross_resolution_loader(
         batch_size=batch_size_per_gpu,
         pin_mem=pin_mem,
         num_workers=num_workers,

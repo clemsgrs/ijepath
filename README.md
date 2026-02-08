@@ -11,6 +11,10 @@ Standard SSL in pathology can overfit stain/scanner shortcuts. This project targ
 - Online context/target extraction with target-footprint non-leakage masking.
 - Smoke-trainable stage-1 pipeline and visualization QA.
 
+## Docs
+- `docs/pathology/README.md`
+- `docs/pathology/config-reference.md`
+
 ## Example sample visualization
 <img src="assets/preview/ijepath_flow.gif" alt="Cross-resolution context-to-target correspondence" width="920" />
 
@@ -41,7 +45,7 @@ Manifest CSV format (`slides_with_tissue_masks.csv`):
 DATA_ROOT=/path/to/your-dataset
 
 # 1) Verify runtime
-python scripts/verify_pathology_training_runtime.py
+python scripts/verify_training_runtime.py
 
 # 2) Build slide metadata index
 python scripts/build_slide_metadata_index_from_manifest.py \
@@ -52,19 +56,32 @@ python scripts/build_slide_metadata_index_from_manifest.py \
 # 3) Build profile-specific anchor catalog
 python scripts/build_valid_context_anchor_catalog.py \
   --slide-index ${DATA_ROOT}/indexes/slide_metadata_index.jsonl \
-  --profile configs/pathology_sampling_profile_ctx1p0_tgt0p5.yaml \
+  --profile configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
   --output ${DATA_ROOT}/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv
 
-# 4) Pathology smoke training
-python main.py --fname configs/pathology_tcga_prad_resampled2x_smoke.yaml --devices cuda:0
-# (Edit paths inside the config to point to your ${DATA_ROOT})
+# 4) Smoke training (layered config: defaults + profile + run)
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
+  --run-config configs/runs/tcga_prad_smoke.yaml \
+  data.slide_manifest_csv=${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
+  data.slide_metadata_index_jsonl=${DATA_ROOT}/indexes/slide_metadata_index.jsonl \
+  data.anchor_catalog_csv=${DATA_ROOT}/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv
+
+# defaults config is implicit: configs/defaults.yaml
+
+# Merged resolved config is saved automatically to:
+# outputs/<run-folder>/params-ijepa.yaml
+
+# Epoch semantics:
+# - data.samples_per_epoch=null  -> one full pass on anchor_catalog rows
+# - data.samples_per_epoch=<int> -> fixed virtual epoch length (e.g. smoke runs)
 ```
 
 ## Preview generation
 ```bash
 python scripts/preview_context_targets.py \
   --anchor-catalog ${DATA_ROOT}/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv \
-  --output-dir outputs/pathology-previews \
+  --output-dir outputs/previews \
   --num-samples 8
 ```
 
@@ -76,7 +93,8 @@ Outputs per sample:
 
 ## Tests
 ```bash
-pytest tests -k pathology
+pytest tests
+pytest -m integration tests/test_pipeline_integration.py
 ```
 
 ## Notes

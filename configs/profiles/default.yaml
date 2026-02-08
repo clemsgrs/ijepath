@@ -1,4 +1,4 @@
-# Pathology profile template (copy/edit to create a custom profile).
+# Profile template (copy/edit to create a custom profile).
 # This file is used by:
 # 1) anchor catalog builder (`--profile ...`)
 # 2) training config merge (`--profile-config ...`)

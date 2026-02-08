@@ -19,7 +19,7 @@ from src.train import main as app_main
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 
-DEFAULT_CONFIG_PATH = "configs/pathology/defaults.yaml"
+DEFAULT_CONFIG_PATH = "configs/defaults.yaml"
 
 
 parser = argparse.ArgumentParser()

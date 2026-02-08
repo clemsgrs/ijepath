@@ -3,17 +3,17 @@ from pathlib import Path
 import pytest
 import torch
 
-from src.datasets.pathology_cross_resolution_wsi_dataset import PathologyCrossResolutionWSIDataset
+from src.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
 
 
-def test_pathology_cross_resolution_dataset_shapes_and_determinism():
+def test_cross_resolution_dataset_shapes_and_determinism():
     repo_root = Path(__file__).resolve().parents[1]
     anchor_csv = repo_root / "data/tcga-prad/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv"
 
     if not anchor_csv.exists():
         pytest.skip("Anchor catalog is not available yet")
 
-    dataset = PathologyCrossResolutionWSIDataset(
+    dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(anchor_csv),
         crop_size=224,
         context_mpp=1.0,

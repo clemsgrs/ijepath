@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.datasets.pathology_cross_resolution_wsi_dataset import PathologyCrossResolutionWSIDataset
+from src.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
 from src.datasets.wsi_readers.wholeslidedata_reader_adapter import (
     WholeSlideDataReaderAdapter,
     spacing_pixels_to_level0_pixels,
@@ -686,7 +686,7 @@ def main() -> int:
     target_fov_um = args.target_fov_um if args.target_fov_um is not None else profile["target_fov_um"]
     targets_per_context = args.targets_per_context if args.targets_per_context is not None else profile["targets_per_context"]
 
-    dataset = PathologyCrossResolutionWSIDataset(
+    dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(anchor_catalog),
         crop_size=args.crop_size,
         context_mpp=context_mpp,

@@ -30,8 +30,8 @@ data:
   spacing_tolerance: 0.05  # Relative tolerance for near-native spacing matching.
 
 logging:
-  folder: outputs/pathology
-  write_tag: pathology-jepa
+  folder: outputs/train
+  write_tag: jepa
 
 mask:
   patch_size: 16  # ViT patch size; used for footprint-to-token mapping.

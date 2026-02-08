@@ -20,8 +20,8 @@ data:
   seed: 0
   wsi_backend: openslide
 logging:
-  folder: outputs/pathology-tcga-prad-smoke
-  write_tag: pathology-jepa-smoke
+  folder: outputs/tcga-prad-smoke
+  write_tag: jepa-smoke
 mask:
   min_keep: 10
   num_enc_masks: 1
