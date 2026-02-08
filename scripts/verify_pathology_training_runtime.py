@@ -9,6 +9,7 @@ REQUIRED_MODULES = {
     "numpy": "numpy",
     "opencv-python": "cv2",
     "pyyaml": "yaml",
+    "omegaconf": "omegaconf",
 }
 
 

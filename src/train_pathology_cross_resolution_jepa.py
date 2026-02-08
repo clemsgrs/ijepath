@@ -73,7 +73,7 @@ def main(args, resume_preempt: bool = False):
         torch.cuda.set_device(device)
 
     # -- DATA
-    batch_size = args["data"]["batch_size"]
+    batch_size_per_gpu = int(args["data"].get("batch_size_per_gpu", args["data"].get("batch_size")))
     pin_mem = args["data"]["pin_mem"]
     num_workers = args["data"]["num_workers"]
     crop_size = args["data"]["crop_size"]
@@ -85,7 +85,9 @@ def main(args, resume_preempt: bool = False):
     target_fov_um = float(args["data"]["target_fov_um"])
     targets_per_context = int(args["data"]["targets_per_context"])
     seed = int(args["data"]["seed"])
-    samples_per_epoch = int(args["data"]["samples_per_epoch"])
+    samples_per_epoch = args["data"].get("samples_per_epoch", None)
+    if samples_per_epoch is not None:
+        samples_per_epoch = int(samples_per_epoch)
     spacing_tolerance = float(args["data"].get("spacing_tolerance", 0.05))
     min_target_tissue_fraction = float(
         args["data"].get("min_target_tissue_fraction", args["data"].get("min_tissue_fraction", 0.25))
@@ -118,11 +120,6 @@ def main(args, resume_preempt: bool = False):
     tag = args["logging"]["write_tag"]
 
     os.makedirs(folder, exist_ok=True)
-    dump = os.path.join(folder, "params-ijepa.yaml")
-    with open(dump, "w") as f:
-        import yaml
-
-        yaml.dump(args, f)
 
     try:
         mp.set_start_method("spawn")
@@ -130,7 +127,25 @@ def main(args, resume_preempt: bool = False):
         pass
 
     world_size, rank = init_distributed()
+    global_batch_size = batch_size_per_gpu * world_size
+    args.setdefault("data", {})
+    args["data"]["batch_size_per_gpu"] = batch_size_per_gpu
+    args["data"]["global_batch_size"] = global_batch_size
+    args["data"]["world_size"] = world_size
+
+    if rank == 0:
+        dump = os.path.join(folder, "params-ijepa.yaml")
+        with open(dump, "w") as f:
+            import yaml
+
+            yaml.dump(args, f)
+
     logger.info(f"Initialized (rank/world-size) {rank}/{world_size}")
+    logger.info(
+        "Batch sizing: per_gpu=%d global=%d",
+        batch_size_per_gpu,
+        global_batch_size,
+    )
     if rank > 0:
         logger.setLevel(logging.ERROR)
 
@@ -159,8 +174,8 @@ def main(args, resume_preempt: bool = False):
     )
     target_encoder = copy.deepcopy(encoder)
 
-    _, unsupervised_loader, unsupervised_sampler = make_pathology_cross_resolution_loader(
-        batch_size=batch_size,
+    unsupervised_dataset, unsupervised_loader, unsupervised_sampler = make_pathology_cross_resolution_loader(
+        batch_size=batch_size_per_gpu,
         pin_mem=pin_mem,
         num_workers=num_workers,
         world_size=world_size,
@@ -239,7 +254,8 @@ def main(args, resume_preempt: bool = False):
             "scaler": None if scaler is None else scaler.state_dict(),
             "epoch": epoch,
             "loss": loss_meter.avg,
-            "batch_size": batch_size,
+            "batch_size_per_gpu": batch_size_per_gpu,
+            "global_batch_size": global_batch_size,
             "world_size": world_size,
             "lr": lr,
         }
@@ -250,6 +266,8 @@ def main(args, resume_preempt: bool = False):
 
     for epoch in range(start_epoch, num_epochs):
         logger.info("Epoch %d" % (epoch + 1))
+        if hasattr(unsupervised_dataset, "set_epoch"):
+            unsupervised_dataset.set_epoch(epoch)
         unsupervised_sampler.set_epoch(epoch)
 
         loss_meter = AverageMeter()

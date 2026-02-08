@@ -1,9 +1,8 @@
 data:
-  dataset_name: pathology_cross_resolution_wsi
   batch_size: 2
   pin_mem: true
   num_workers: 0
-  crop_size: 224
+  crop_size: 224  # Model input size for both context and target crops.
   slide_manifest_csv: data/tcga-prad/manifests/tcga_prad_slides_with_tissue_masks.csv
   slide_metadata_index_jsonl: data/tcga-prad/indexes/slide_metadata_index.jsonl
   anchor_catalog_csv: data/tcga-prad/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv
@@ -12,33 +11,22 @@ data:
   context_fov_um: 512.0
   target_fov_um: 128.0
   targets_per_context: 4
-  min_tissue_fraction: 0.2
-  min_target_tissue_fraction: 0.25
-  insufficient_target_policy: skip_anchor
-  min_target_tissue_fraction_floor: 0.1
-  min_target_tissue_fraction_step: 0.05
-  samples_per_epoch: 8
-  spacing_tolerance: 0.05
+  min_target_tissue_fraction: 0.25  # Online per-target tissue threshold during training sampling.
+  insufficient_target_policy: skip_anchor  # Options: skip_anchor | skip_slide | lower_threshold.
+  min_target_tissue_fraction_floor: 0.1  # Used only with lower_threshold policy.
+  min_target_tissue_fraction_step: 0.05  # Threshold decrement per retry with lower_threshold.
+  samples_per_epoch: 8  # Virtual dataset length per epoch.
+  spacing_tolerance: 0.05  # Relative tolerance for requested-vs-source spacing matching.
   seed: 0
   wsi_backend: openslide
 logging:
   folder: outputs/pathology-tcga-prad-smoke
   write_tag: pathology-jepa-smoke
 mask:
-  allow_overlap: false
-  aspect_ratio:
-  - 1.0
-  - 1.0
-  enc_mask_scale:
-  - 0.75
-  - 0.75
   min_keep: 10
   num_enc_masks: 1
-  num_pred_masks: 4
-  patch_size: 16
-  pred_mask_scale:
-  - 0.1
-  - 0.1
+  num_pred_masks: 4  # Should match data.targets_per_context.
+  patch_size: 16  # ViT patch size; also used for footprint-to-token mask conversion.
 meta:
   copy_data: false
   load_checkpoint: false

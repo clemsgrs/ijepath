@@ -248,6 +248,46 @@ def test_target_sampling_returns_none_when_threshold_is_impossible(tmp_path):
     assert sampled is None
 
 
+def test_rng_seed_varies_across_epochs_for_same_index(tmp_path):
+    dummy_csv = tmp_path / "anchors.csv"
+    _write_min_anchor_csv(
+        dummy_csv,
+        {
+            "anchor_id": "dummy_0",
+            "slide_id": "dummy",
+            "wsi_path": "/tmp/nonexistent.tif",
+            "mask_path": "",
+            "center_x_level0": 0,
+            "center_y_level0": 0,
+            "wsi_level0_spacing_mpp": 0.25,
+            "target_margin_um": 8.0,
+        },
+    )
+
+    dataset = PathologyCrossResolutionWSIDataset(
+        anchor_catalog_csv=str(dummy_csv),
+        crop_size=224,
+        context_mpp=1.0,
+        target_mpp=0.5,
+        context_fov_um=64.0,
+        target_fov_um=16.0,
+        targets_per_context=4,
+        seed=123,
+    )
+
+    seed_e0_a = dataset._rng_seed_for(index=7, anchor_attempt=2)
+    seed_e0_b = dataset._rng_seed_for(index=7, anchor_attempt=2)
+    assert seed_e0_a == seed_e0_b
+
+    dataset.set_epoch(1)
+    seed_e1 = dataset._rng_seed_for(index=7, anchor_attempt=2)
+    assert seed_e1 != seed_e0_a
+
+    dataset.set_epoch(1)
+    seed_e1_repeat = dataset._rng_seed_for(index=7, anchor_attempt=2)
+    assert seed_e1 == seed_e1_repeat
+
+
 def _make_dummy_sample(anchor_id: str, slide_id: str):
     return {
         "context_image": torch.zeros(3, 224, 224),
