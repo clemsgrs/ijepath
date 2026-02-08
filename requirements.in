@@ -2,6 +2,8 @@ torch==%PYTORCH_VERSION%
 torchvision==%TORCHVISION_VERSION%
 pyyaml
 omegaconf
+tqdm
+wandb
 numpy<2
 opencv-python
 submitit

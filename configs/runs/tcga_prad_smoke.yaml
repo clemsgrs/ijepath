@@ -8,6 +8,9 @@ logging:
   folder: outputs/tcga-prad-smoke
   write_tag: jepa-smoke
 
+wandb:
+  enable: false
+
 meta:
   use_bfloat16: false
   load_checkpoint: false

@@ -33,6 +33,16 @@ logging:
   folder: outputs/train
   write_tag: jepa
 
+wandb:
+  enable: false
+  project: ijepath
+  username: null
+  exp_name: null
+  tags: []
+  dir: null
+  group: null
+  resume_id: null
+
 mask:
   patch_size: 16  # ViT patch size; used for footprint-to-token mapping.
   num_enc_masks: 1
