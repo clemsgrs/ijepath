@@ -1,0 +1,11 @@
+torch==%PYTORCH_VERSION%
+torchvision==%TORCHVISION_VERSION%
+pyyaml
+omegaconf
+numpy
+opencv-python
+submitit
+wholeslidedata
+openslide-python
+Pillow
+pytest

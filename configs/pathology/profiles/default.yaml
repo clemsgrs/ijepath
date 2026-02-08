@@ -1,0 +1,22 @@
+# Pathology profile template (copy/edit to create a custom profile).
+# This file is used by:
+# 1) anchor catalog builder (`--profile ...`)
+# 2) training config merge (`--profile-config ...`)
+
+profile_id: profile_name_here  # Unique id embedded in anchor catalog rows.
+
+# Cross-resolution geometry (single source of truth for profile settings).
+context_mpp: null  # Default in defaults.yaml: null (must be provided by profile).
+target_mpp: null  # Default in defaults.yaml: null (must be provided by profile).
+context_fov_um: null  # Default in defaults.yaml: null (must be provided by profile).
+target_fov_um: null  # Default in defaults.yaml: null (must be provided by profile).
+targets_per_context: null  # Default in defaults.yaml: null (must be provided by profile).
+
+# Anchor candidate generation / validity.
+min_tissue_fraction: 0.2  # Default profile value used by indexing.
+anchor_stride_fraction: 0.5  # Default profile value used by indexing.
+target_margin_um: 16.0  # Default profile value used by indexing.
+
+# Spacing matching and deterministic behavior.
+spacing_tolerance: 0.05  # Default in defaults.yaml (shared with training data.spacing_tolerance).
+seed: 0  # Default profile/indexing seed.

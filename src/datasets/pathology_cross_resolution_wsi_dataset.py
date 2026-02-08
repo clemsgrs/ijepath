@@ -78,7 +78,14 @@ class PathologyCrossResolutionWSIDataset(Dataset):
         if not self.anchors:
             raise ValueError(f"No anchors found in catalog: {self.anchor_catalog_csv}")
 
-        self.samples_per_epoch = int(samples_per_epoch) if samples_per_epoch else len(self.anchors)
+        if samples_per_epoch is None:
+            self.samples_per_epoch = len(self.anchors)
+        else:
+            self.samples_per_epoch = int(samples_per_epoch)
+            if self.samples_per_epoch <= 0:
+                raise ValueError("samples_per_epoch must be > 0 when provided")
+
+        self.current_epoch = 0
         self._reader_cache: Dict[str, WholeSlideDataReaderAdapter] = {}
         self._resolution_plan_cache: Dict[str, dict] = {}
 
@@ -89,6 +96,19 @@ class PathologyCrossResolutionWSIDataset(Dataset):
 
     def __len__(self) -> int:
         return self.samples_per_epoch
+
+    def set_epoch(self, epoch: int) -> None:
+        self.current_epoch = int(epoch)
+
+    def _rng_seed_for(self, index: int, anchor_attempt: int) -> int:
+        # Epoch-aware seeding ensures repeated indices can yield different
+        # target placements across epochs while remaining deterministic.
+        return (
+            int(self.seed)
+            + int(index)
+            + int(anchor_attempt) * 1_000_003
+            + int(self.current_epoch) * 10_000_019
+        )
 
     def _get_reader(self, row: dict) -> WholeSlideDataReaderAdapter:
         slide_id = row["slide_id"]
@@ -402,7 +422,7 @@ class PathologyCrossResolutionWSIDataset(Dataset):
             context_size_requested_px=context_size_requested_px,
         )
 
-        rng_seed = self.seed + index + anchor_attempt * 1_000_003
+        rng_seed = self._rng_seed_for(index=index, anchor_attempt=anchor_attempt)
         rng = np.random.default_rng(rng_seed)
         sampled = self._sample_target_boxes_in_context(
             rng=rng,
@@ -473,6 +493,7 @@ class PathologyCrossResolutionWSIDataset(Dataset):
                 "slide_id": anchor["slide_id"],
                 "anchor_id": anchor["anchor_id"],
                 "anchor_retry_offset": int(anchor_attempt),
+                "dataset_epoch": int(self.current_epoch),
                 "requested_context_mpp": self.context_mpp,
                 "requested_target_mpp": self.target_mpp,
                 "output_context_mpp": self.context_mpp,

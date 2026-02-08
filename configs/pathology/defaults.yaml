@@ -1,0 +1,60 @@
+data:
+  # -- Runtime and loading
+  batch_size_per_gpu: 64  # global_batch_size = batch_size_per_gpu * world_size.
+  pin_mem: true
+  num_workers: 8
+  crop_size: 224  # Model input size for both context and target crops.
+  samples_per_epoch: 200000  # With epochs=100 and global_batch_size~128, this is ~156k optimizer steps total.
+  seed: 0
+  wsi_backend: openslide  # Backend for wholeslidedata reader.
+
+  # -- Required paths (override in run config)
+  slide_manifest_csv: null
+  slide_metadata_index_jsonl: null
+  anchor_catalog_csv: null
+
+  # -- Cross-resolution geometry (override in profile config)
+  context_mpp: null
+  target_mpp: null
+  context_fov_um: null
+  target_fov_um: null
+  targets_per_context: null
+
+  # -- Tissue-aware target sampling
+  min_target_tissue_fraction: 0.25
+  insufficient_target_policy: skip_anchor  # skip_anchor | skip_slide | lower_threshold
+  min_target_tissue_fraction_floor: 0.10  # Used only when policy=lower_threshold.
+  min_target_tissue_fraction_step: 0.05  # Decrement step for lower_threshold.
+
+  # -- Spacing handling
+  spacing_tolerance: 0.05  # Relative tolerance for near-native spacing matching.
+
+logging:
+  folder: outputs/pathology
+  write_tag: pathology-jepa
+
+mask:
+  patch_size: 16  # ViT patch size; used for footprint-to-token mapping.
+  num_enc_masks: 1
+  num_pred_masks: null  # Should match data.targets_per_context.
+  min_keep: 16
+
+meta:
+  copy_data: false
+  load_checkpoint: false
+  model_name: vit_small
+  pred_depth: 3
+  pred_emb_dim: 192
+  read_checkpoint: null
+  use_bfloat16: true
+
+optimization:
+  ema: [0.996, 1.0]
+  epochs: 100
+  final_lr: 1.0e-06
+  final_weight_decay: 0.1
+  ipe_scale: 1.0
+  lr: 0.0002
+  start_lr: 0.00002
+  warmup: 0.1
+  weight_decay: 0.04
