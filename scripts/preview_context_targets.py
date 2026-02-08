@@ -273,10 +273,8 @@ def _thumbnail_from_wsi_row(
 def _make_predictor_single_query_view(
     context_rgb: np.ndarray,
     target_box_xyxy: np.ndarray,
-    query_index: int,
 ) -> np.ndarray:
     out = context_rgb.copy()
-    _ = query_index
     x0, y0, x1, y1 = [int(round(v)) for v in target_box_xyxy.tolist()]
     x0 = max(0, min(out.shape[1] - 1, x0))
     y0 = max(0, min(out.shape[0] - 1, y0))
@@ -308,7 +306,7 @@ def _make_predictor_query_grid(
 
     for idx, box in enumerate(boxes_xyxy):
         color = TARGET_COLORS[idx % len(TARGET_COLORS)]
-        view = _make_predictor_single_query_view(context_rgb=context_rgb, target_box_xyxy=box, query_index=idx)
+        view = _make_predictor_single_query_view(context_rgb=context_rgb, target_box_xyxy=box)
         tile = cv2.resize(view, (tile_size, tile_size), interpolation=cv2.INTER_LINEAR)
         r = idx // cols
         c = idx % cols

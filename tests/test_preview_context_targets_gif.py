@@ -138,7 +138,6 @@ def test_predictor_single_query_view_masks_target_region_visibly():
     view = mod._make_predictor_single_query_view(
         context_rgb=context,
         target_box_xyxy=box,
-        query_index=0,
     )
 
     x0, y0, x1, y1 = [int(round(v)) for v in box.tolist()]
