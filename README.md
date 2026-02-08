@@ -108,6 +108,22 @@ pytest -m integration tests/test_pipeline_integration.py
 ## Notes
 - Metadata distinguishes `source_*_mpp` (pyramid read spacing) vs `output_*_mpp` (nominal requested spacing semantics).
 - Tissue-aware target fallback policies are configurable (`skip_anchor`, `skip_slide`, `lower_threshold`).
+- Target box patch-alignment is configurable via `data.align_targets_to_patch_grid`.
+
+### Target Sampling Strategy: Aligned vs Non-Aligned
+Use `data.align_targets_to_patch_grid` to choose how target boxes are sampled in context coordinates.
+
+- `false` (non-aligned, default):
+  - Pros: higher spatial diversity; richer sub-patch offsets; better coverage of local morphology variation.
+  - Cons: target-to-token rasterization is quantized, so predictor footprints can have **excess tokens** (partially outside the ideal box) and, after collation/truncation, occasionally **missing tokens** vs the ideal per-target footprint.
+
+- `true` (patch-aligned):
+  - Pros: cleaner and more interpretable footprint geometry on the token grid; easier debugging/visualization; consistent box edges at patch boundaries.
+  - Cons: reduced spatial diversity due to quantized candidate positions; potentially less robustness to small spatial shifts.
+
+Practical guidance:
+- Prefer `false` for representation learning quality (more diversity).
+- Prefer `true` for debugging, controlled ablations, and explanatory visualizations.
 
 ## Upstream provenance
 Based on the official I-JEPA implementation and paper:
