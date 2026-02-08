@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from contextlib import nullcontext
 
 import numpy as np
 import torch
@@ -81,6 +82,10 @@ def resolve_checkpoint_every_epochs(logging_cfg: dict) -> int:
     if checkpoint_every_epochs <= 0:
         raise ValueError("logging.checkpoint_every_epochs must be > 0")
     return checkpoint_every_epochs
+
+
+def resolve_use_bfloat16(requested_use_bfloat16: bool, cuda_available: bool) -> bool:
+    return bool(requested_use_bfloat16 and cuda_available)
 
 
 def build_epoch_train_results(
@@ -194,7 +199,11 @@ def main(
     distributed_state: tuple[int, int] | None = None,
 ):
     # -- META
-    use_bfloat16 = args["meta"]["use_bfloat16"]
+    requested_use_bfloat16 = bool(args["meta"]["use_bfloat16"])
+    use_bfloat16 = resolve_use_bfloat16(
+        requested_use_bfloat16=requested_use_bfloat16,
+        cuda_available=torch.cuda.is_available(),
+    )
     architecture = args["meta"]["architecture"]
     patch_size = int(args["meta"]["patch_size"])
     load_model = args["meta"]["load_checkpoint"] or resume_preempt
@@ -207,6 +216,9 @@ def main(
     else:
         device = torch.device("cuda:0")
         torch.cuda.set_device(device)
+
+    if requested_use_bfloat16 and not use_bfloat16:
+        logger.warning("Disabled bfloat16 AMP because CUDA is unavailable in this runtime.")
 
     # -- DATA
     batch_size_per_gpu = int(args["data"].get("batch_size_per_gpu", args["data"].get("batch_size")))
@@ -540,12 +552,17 @@ def main(
                                 loss = AllReduce.apply(loss)
                                 return loss
 
-                            with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
+                            autocast_context = (
+                                torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+                                if use_bfloat16
+                                else nullcontext()
+                            )
+                            with autocast_context:
                                 h = forward_target()
                                 z = forward_context()
                                 loss = loss_fn(z, h)
 
-                            if use_bfloat16:
+                            if use_bfloat16 and scaler is not None:
                                 scaler.scale(loss).backward()
                                 scaler.step(optimizer)
                                 scaler.update()

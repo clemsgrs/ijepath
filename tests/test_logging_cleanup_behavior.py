@@ -1,4 +1,5 @@
 import main as main_entry
+import torch
 
 
 def test_process_main_defers_config_logging_to_trainer(monkeypatch):
@@ -145,6 +146,39 @@ def test_build_grad_stats_log_line_uses_standardized_labels():
     assert "grad_norm_min=7.89e-04" in line
     assert "grad_norm_max=9.99e-01" in line
     assert "grad_stats:" not in line
+
+
+def test_resolve_use_bfloat16_disables_on_cpu_only_runtime():
+    from ijepath.train_cross_resolution_jepa import resolve_use_bfloat16
+
+    assert resolve_use_bfloat16(requested_use_bfloat16=True, cuda_available=False) is False
+    assert resolve_use_bfloat16(requested_use_bfloat16=False, cuda_available=True) is False
+    assert resolve_use_bfloat16(requested_use_bfloat16=True, cuda_available=True) is True
+
+
+def test_init_opt_does_not_construct_grad_scaler_without_cuda(monkeypatch):
+    from ijepath import helper
+
+    monkeypatch.setattr(helper.torch.cuda, "is_available", lambda: False)
+
+    def _raise_if_called(*args, **kwargs):
+        raise AssertionError("GradScaler should not be constructed when CUDA is unavailable")
+
+    monkeypatch.setattr(helper.torch.cuda.amp, "GradScaler", _raise_if_called)
+
+    encoder = torch.nn.Linear(4, 4)
+    predictor = torch.nn.Linear(4, 4)
+    _optimizer, scaler, _scheduler, _wd_scheduler = helper.init_opt(
+        encoder=encoder,
+        predictor=predictor,
+        iterations_per_epoch=1,
+        start_lr=1e-5,
+        ref_lr=1e-4,
+        warmup=0.1,
+        num_epochs=1,
+        use_bfloat16=True,
+    )
+    assert scaler is None
 
 
 def test_launch_worker_processes_waits_for_all_children(monkeypatch):
