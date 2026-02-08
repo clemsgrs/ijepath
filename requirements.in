@@ -2,10 +2,11 @@ torch==%PYTORCH_VERSION%
 torchvision==%TORCHVISION_VERSION%
 pyyaml
 omegaconf
-numpy
+numpy<2
 opencv-python
 submitit
-wholeslidedata
+wholeslidedata<0.0.16
 openslide-python
 Pillow
 pytest
+matplotlib
