@@ -145,3 +145,60 @@ def test_build_grad_stats_log_line_uses_standardized_labels():
     assert "grad_norm_min=7.89e-04" in line
     assert "grad_norm_max=9.99e-01" in line
     assert "grad_stats:" not in line
+
+
+def test_launch_worker_processes_waits_for_all_children(monkeypatch):
+    starts: list[tuple] = []
+    joins: list[int] = []
+
+    class _FakeProcess:
+        def __init__(self, target, args):
+            self._target = target
+            self._args = args
+            self.exitcode = 0
+
+        def start(self):
+            starts.append(self._args)
+
+        def join(self):
+            joins.append(self._args[0])
+
+    monkeypatch.setattr(main_entry.mp, "Process", _FakeProcess)
+
+    main_entry.launch_worker_processes(
+        profile_config="profile.yaml",
+        run_config="run.yaml",
+        opts=["x=1"],
+        visible_devices=["cpu", "1"],
+    )
+
+    assert len(starts) == 2
+    assert len(joins) == 2
+    assert set(joins) == {0, 1}
+
+
+def test_launch_worker_processes_raises_on_failed_child(monkeypatch):
+    class _FakeProcess:
+        def __init__(self, target, args):
+            self._target = target
+            self._args = args
+            self.exitcode = 0 if args[0] == 0 else 2
+
+        def start(self):
+            return None
+
+        def join(self):
+            return None
+
+    monkeypatch.setattr(main_entry.mp, "Process", _FakeProcess)
+
+    try:
+        main_entry.launch_worker_processes(
+            profile_config="profile.yaml",
+            run_config="run.yaml",
+            opts=[],
+            visible_devices=["cpu", "1"],
+        )
+        raise AssertionError("Expected SystemExit when a worker exits with nonzero status")
+    except SystemExit as exc:
+        assert "rank=1" in str(exc)

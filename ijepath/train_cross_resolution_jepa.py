@@ -1,4 +1,3 @@
-import copy
 import logging
 import os
 import time
@@ -172,6 +171,23 @@ def build_grad_stats_log_line(
     )
 
 
+def copy_matching_state_dict_params(source: torch.nn.Module, target: torch.nn.Module) -> tuple[int, int]:
+    source_state = source.state_dict()
+    target_state = target.state_dict()
+
+    matched = 0
+    for name, target_value in target_state.items():
+        source_value = source_state.get(name)
+        if source_value is None or source_value.shape != target_value.shape:
+            continue
+        target_state[name] = source_value.detach().clone()
+        matched += 1
+
+    target.load_state_dict(target_state)
+    skipped = int(len(target_state) - matched)
+    return matched, skipped
+
+
 def main(
     args,
     resume_preempt: bool = False,
@@ -325,7 +341,23 @@ def main(
         pred_emb_dim=pred_emb_dim,
         architecture=architecture,
     )
-    target_encoder = copy.deepcopy(encoder)
+    target_encoder, _unused_target_predictor = init_model(
+        device=device,
+        patch_size=patch_size,
+        crop_size=target_input_size_px,
+        pred_depth=pred_depth,
+        pred_emb_dim=pred_emb_dim,
+        architecture=architecture,
+    )
+    del _unused_target_predictor
+    matched_params, skipped_params = copy_matching_state_dict_params(
+        source=encoder,
+        target=target_encoder,
+    )
+    logger.info(
+        f"Initialized target encoder from context encoder: "
+        f"matched_state_entries={matched_params} skipped_state_entries={skipped_params}"
+    )
 
     unsupervised_dataset, unsupervised_loader, unsupervised_sampler = make_cross_resolution_loader(
         batch_size=batch_size_per_gpu,
@@ -375,6 +407,18 @@ def main(
         target_encoder = DistributedDataParallel(target_encoder)
     for p in target_encoder.parameters():
         p.requires_grad = False
+
+    target_named_params = dict(target_encoder.named_parameters())
+    ema_pairs: list[tuple[torch.nn.Parameter, torch.nn.Parameter]] = []
+    for name_q, param_q in encoder.named_parameters():
+        param_k = target_named_params.get(name_q)
+        if param_k is None or param_q.shape != param_k.shape:
+            continue
+        ema_pairs.append((param_q, param_k))
+    logger.info(
+        f"EMA parameter pairing ready: matched_pairs={len(ema_pairs)} "
+        f"skipped_pairs={len(target_named_params) - len(ema_pairs)}"
+    )
 
     momentum_scheduler = (
         ema[0] + i * (ema[1] - ema[0]) / (ipe * num_epochs * ipe_scale)
@@ -513,7 +557,7 @@ def main(
 
                             with torch.no_grad():
                                 m = next(momentum_scheduler)
-                                for param_q, param_k in zip(encoder.parameters(), target_encoder.parameters()):
+                                for param_q, param_k in ema_pairs:
                                     param_k.data.mul_(m).add_((1.0 - m) * param_q.detach().data)
 
                             return (float(loss), _new_lr, _new_wd, grad_stats)

@@ -103,7 +103,7 @@ def test_end_to_end_fixture_smoke(tmp_path: Path):
             "--profile-config",
             str(repo_root / "configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml"),
             "--run-config",
-            str(repo_root / "configs/runs/tcga_prad_smoke.yaml"),
+            str(repo_root / "configs/runs/smoke.yaml"),
             f"data.slide_manifest_csv={manifest_csv}",
             f"data.slide_metadata_index_jsonl={slide_index_jsonl}",
             f"data.anchor_catalog_csv={anchor_catalog_csv}",

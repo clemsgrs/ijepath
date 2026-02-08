@@ -85,6 +85,45 @@ def process_main(rank, profile_config, run_config, opts, world_size, visible_dev
     app_main(args=params, distributed_state=(world_size, rank))
 
 
+def launch_worker_processes(
+    *,
+    profile_config: str,
+    run_config: str,
+    opts: list[str] | None,
+    visible_devices: list[str],
+) -> None:
+    world_size = len(visible_devices)
+    workers: list[tuple[int, str, mp.Process]] = []
+
+    for rank in range(world_size):
+        process = mp.Process(
+            target=process_main,
+            args=(
+                rank,
+                profile_config,
+                run_config,
+                opts,
+                world_size,
+                visible_devices,
+            ),
+        )
+        process.start()
+        workers.append((rank, visible_devices[rank], process))
+
+    failed_workers: list[tuple[int, str, int | None]] = []
+    for rank, device, process in workers:
+        process.join()
+        if process.exitcode != 0:
+            failed_workers.append((rank, device, process.exitcode))
+
+    if failed_workers:
+        failure_summary = ", ".join(
+            f"(rank={rank}, device={device}, exitcode={exitcode})"
+            for rank, device, exitcode in failed_workers
+        )
+        raise SystemExit(f"Worker process failure(s): {failure_summary}")
+
+
 if __name__ == '__main__':
     args = parser.parse_args()
 
@@ -95,18 +134,11 @@ if __name__ == '__main__':
         )
 
     visible_devices = _discover_visible_devices()
-    num_gpus = len(visible_devices)
     mp.set_start_method('spawn')
 
-    for rank in range(num_gpus):
-        mp.Process(
-            target=process_main,
-            args=(
-                rank,
-                args.profile_config,
-                args.run_config,
-                args.opts,
-                num_gpus,
-                visible_devices,
-            )
-        ).start()
+    launch_worker_processes(
+        profile_config=args.profile_config,
+        run_config=args.run_config,
+        opts=args.opts,
+        visible_devices=visible_devices,
+    )
