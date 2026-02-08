@@ -3,6 +3,7 @@ name: Smoke (Docker)
 on:
   pull_request:
     paths:
+      - "Dockerfile.ci"
       - "Dockerfile"
       - "requirements.in"
       - "main.py"
@@ -33,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build --tag ijepath-smoke-ci:latest --file Dockerfile .
+        run: docker build --tag ijepath-smoke-ci:latest --file Dockerfile.ci .
 
       - name: Run integration smoke test
         run: |
