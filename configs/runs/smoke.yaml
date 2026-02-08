@@ -1,0 +1,5 @@
+data:
+  samples_per_epoch: 10
+
+optimization:
+  epochs: 1

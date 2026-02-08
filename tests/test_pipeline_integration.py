@@ -103,7 +103,7 @@ def test_end_to_end_fixture_smoke(tmp_path: Path):
             "--profile-config",
             str(repo_root / "configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml"),
             "--run-config",
-            str(repo_root / "configs/runs/tcga_prad_smoke.yaml"),
+            str(repo_root / "configs/runs/smoke.yaml"),
             f"data.slide_manifest_csv={manifest_csv}",
             f"data.slide_metadata_index_jsonl={slide_index_jsonl}",
             f"data.anchor_catalog_csv={anchor_catalog_csv}",
@@ -125,5 +125,16 @@ def test_end_to_end_fixture_smoke(tmp_path: Path):
     with log_path.open("r", newline="", encoding="utf-8") as f:
         train_rows = list(csv.DictReader(f))
     assert len(train_rows) > 0
+    expected_columns = {
+        "epoch",
+        "iteration",
+        "loss",
+        "context_keep_tokens",
+        "target_predict_tokens",
+        "iteration_time_ms",
+        "learning_rate",
+        "weight_decay",
+    }
+    assert expected_columns.issubset(set(train_rows[0].keys()))
     losses = [float(r["loss"]) for r in train_rows]
     assert all(loss == loss and loss != float("inf") and loss != float("-inf") for loss in losses)

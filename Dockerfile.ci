@@ -1,4 +1,12 @@
-FROM python:3.12-slim
+ARG PYTHON_VERSION=3.10
+ARG PYTORCH_VERSION=2.0.1
+ARG TORCHVISION_VERSION=0.15.2
+
+FROM python:${PYTHON_VERSION}-slim
+
+ARG PYTHON_VERSION
+ARG PYTORCH_VERSION
+ARG TORCHVISION_VERSION
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -17,21 +25,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtiff6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install CPU-only runtime dependencies for smoke tests.
-RUN python -m pip install --upgrade pip setuptools wheel \
+COPY requirements.in /tmp/requirements.in
+
+# Install CPU-only runtime dependencies for smoke/integration tests from the shared dependency source.
+RUN cp /tmp/requirements.in /tmp/requirements.ci.in \
+    && sed -i -e "s|%PYTORCH_VERSION%|${PYTORCH_VERSION}|g" /tmp/requirements.ci.in \
+    && sed -i -e "s|%TORCHVISION_VERSION%|${TORCHVISION_VERSION}|g" /tmp/requirements.ci.in \
+    && python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install \
-      "numpy<2" \
-      omegaconf \
-      opencv-python-headless \
-      openslide-python \
-      Pillow \
-      pyyaml \
-      pytest \
-      submitit \
-      "wholeslidedata<0.0.16" \
-   &&  python -m pip install --index-url https://pypi.org/simple \
+      --index-url https://pypi.org/simple \
       --extra-index-url https://download.pytorch.org/whl/cpu \
-      torch torchvision
+      -r /tmp/requirements.ci.in
 
 COPY . /workspace
 ENV PYTHONPATH=/workspace

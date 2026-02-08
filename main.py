@@ -12,7 +12,6 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 
-from ijepath.config_logging import render_config_yaml
 from ijepath.utils.distributed import init_distributed
 from ijepath.config_loading import load_training_config
 from ijepath.utils.log_utils import setup_logging
@@ -62,11 +61,8 @@ def process_main(rank, profile_config, run_config, opts, world_size, visible_dev
     logger = setup_logging(level=logging.INFO if rank == 0 else logging.ERROR)
 
     logger.info(
-        "called-params default=%s profile=%s run=%s opts=%s",
-        DEFAULT_CONFIG_PATH,
-        profile_config,
-        run_config,
-        opts,
+        f"called-params default={DEFAULT_CONFIG_PATH} "
+        f"profile={profile_config} run={run_config} opts={opts}"
     )
 
     # -- load script params
@@ -76,13 +72,56 @@ def process_main(rank, profile_config, run_config, opts, world_size, visible_dev
         run_config=run_config,
         opts=opts,
     )
-    logger.info('loaded params...')
-    if rank == 0:
-        logger.info(render_config_yaml(params))
+    logger.info(
+        f"loaded layered config (default={DEFAULT_CONFIG_PATH} "
+        f"profile={profile_config} run={run_config})"
+    )
 
     world_size, rank = init_distributed(rank_and_world_size=(rank, world_size))
-    logger.info(f'Running... (rank: {rank}/{world_size})')
-    app_main(args=params)
+    logger.info(
+        f"Distributed context initialized: rank={rank} "
+        f"world_size={world_size} device={device_token}"
+    )
+    app_main(args=params, distributed_state=(world_size, rank))
+
+
+def launch_worker_processes(
+    *,
+    profile_config: str,
+    run_config: str,
+    opts: list[str] | None,
+    visible_devices: list[str],
+) -> None:
+    world_size = len(visible_devices)
+    workers: list[tuple[int, str, mp.Process]] = []
+
+    for rank in range(world_size):
+        process = mp.Process(
+            target=process_main,
+            args=(
+                rank,
+                profile_config,
+                run_config,
+                opts,
+                world_size,
+                visible_devices,
+            ),
+        )
+        process.start()
+        workers.append((rank, visible_devices[rank], process))
+
+    failed_workers: list[tuple[int, str, int | None]] = []
+    for rank, device, process in workers:
+        process.join()
+        if process.exitcode != 0:
+            failed_workers.append((rank, device, process.exitcode))
+
+    if failed_workers:
+        failure_summary = ", ".join(
+            f"(rank={rank}, device={device}, exitcode={exitcode})"
+            for rank, device, exitcode in failed_workers
+        )
+        raise SystemExit(f"Worker process failure(s): {failure_summary}")
 
 
 if __name__ == '__main__':
@@ -95,18 +134,11 @@ if __name__ == '__main__':
         )
 
     visible_devices = _discover_visible_devices()
-    num_gpus = len(visible_devices)
     mp.set_start_method('spawn')
 
-    for rank in range(num_gpus):
-        mp.Process(
-            target=process_main,
-            args=(
-                rank,
-                args.profile_config,
-                args.run_config,
-                args.opts,
-                num_gpus,
-                visible_devices,
-            )
-        ).start()
+    launch_worker_processes(
+        profile_config=args.profile_config,
+        run_config=args.run_config,
+        opts=args.opts,
+        visible_devices=visible_devices,
+    )

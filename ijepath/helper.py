@@ -98,7 +98,13 @@ def init_model(
 
     encoder.to(device)
     predictor.to(device)
-    logger.info(encoder)
+    encoder_params = sum(int(p.numel()) for p in encoder.parameters())
+    predictor_params = sum(int(p.numel()) for p in predictor.parameters())
+    logger.info(
+        f"Initialized model: architecture={architecture} patch_size={int(patch_size)} "
+        f"crop_size={int(crop_size)} encoder_params={encoder_params} "
+        f"predictor_params={predictor_params}"
+    )
     return encoder, predictor
 
 
@@ -150,5 +156,6 @@ def init_opt(
         ref_wd=wd,
         final_wd=final_wd,
         T_max=int(ipe_scale*num_epochs*iterations_per_epoch))
-    scaler = torch.cuda.amp.GradScaler() if use_bfloat16 else None
+    use_cuda_amp = bool(use_bfloat16 and torch.cuda.is_available())
+    scaler = torch.cuda.amp.GradScaler() if use_cuda_amp else None
     return optimizer, scaler, scheduler, wd_scheduler

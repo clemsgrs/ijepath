@@ -67,6 +67,8 @@ optimization:
 logging:
   folder: outputs/run
   write_tag: jepa-run
+  step_log_every_iters: 0  # 0 => disable per-step terminal logs and rely on epoch summaries.
+  checkpoint_every_epochs: 50  # Save numbered checkpoint every N epochs, plus always keep latest.
 
 wandb:
   enable: false
