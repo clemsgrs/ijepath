@@ -127,3 +127,31 @@ def test_make_zoomed_four_panel_figure_shape():
     assert figure.dtype == np.uint8
     assert figure.shape[0] >= 1100
     assert figure.shape[1] >= 1600
+
+
+def test_predictor_single_query_view_masks_target_region_visibly():
+    mod = _load_preview_module()
+    context = np.full((180, 180, 3), 214, dtype=np.uint8)
+    context[36:144, 36:144] = np.array([198, 168, 150], dtype=np.uint8)
+    box = np.array([64.0, 64.0, 116.0, 116.0], dtype=np.float32)
+
+    view = mod._make_predictor_single_query_view(
+        context_rgb=context,
+        target_box_xyxy=box,
+        query_index=0,
+    )
+
+    x0, y0, x1, y1 = [int(round(v)) for v in box.tolist()]
+    masked_mean = float(view[y0:y1, x0:x1].mean())
+
+    pad = 10
+    ax0 = max(0, x0 - pad)
+    ay0 = max(0, y0 - pad)
+    ax1 = min(view.shape[1], x1 + pad)
+    ay1 = min(view.shape[0], y1 + pad)
+    neighborhood = view[ay0:ay1, ax0:ax1]
+    ring_mask = np.ones(neighborhood.shape[:2], dtype=bool)
+    ring_mask[(y0 - ay0) : (y1 - ay0), (x0 - ax0) : (x1 - ax0)] = False
+    unmasked_mean = float(neighborhood[ring_mask].mean())
+
+    assert masked_mean < (unmasked_mean - 18.0)

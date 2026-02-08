@@ -14,6 +14,7 @@ import tqdm
 from ijepath.datasets.cross_resolution_loader_factory import (
     make_cross_resolution_loader,
 )
+from ijepath.datasets.cross_resolution_wsi_dataset import snap_size_to_patch_multiple
 from ijepath.config_logging import log_and_write_config
 from ijepath.helper import init_model, init_opt, load_checkpoint
 from ijepath.log.tracker import (
@@ -69,7 +70,8 @@ def flatten_teacher_targets_for_predictor_order(
 def main(args, resume_preempt: bool = False):
     # -- META
     use_bfloat16 = args["meta"]["use_bfloat16"]
-    model_name = args["meta"]["model_name"]
+    architecture = args["meta"]["architecture"]
+    patch_size = int(args["meta"]["patch_size"])
     load_model = args["meta"]["load_checkpoint"] or resume_preempt
     r_file = args["meta"]["read_checkpoint"]
     pred_depth = args["meta"]["pred_depth"]
@@ -85,7 +87,6 @@ def main(args, resume_preempt: bool = False):
     batch_size_per_gpu = int(args["data"].get("batch_size_per_gpu", args["data"].get("batch_size")))
     pin_mem = args["data"]["pin_mem"]
     num_workers = args["data"]["num_workers"]
-    crop_size = args["data"]["crop_size"]
 
     anchor_catalog_csv = args["data"]["anchor_catalog_csv"]
     context_mpp = float(args["data"]["context_mpp"])
@@ -109,9 +110,32 @@ def main(args, resume_preempt: bool = False):
     wsi_backend = str(args["data"].get("wsi_backend", "openslide"))
 
     # -- MASK
-    patch_size = args["mask"]["patch_size"]
     num_enc_masks = args["mask"]["num_enc_masks"]
     min_keep = args["mask"]["min_keep"]
+    context_size_raw_px = max(1, int(round(context_fov_um / context_mpp)))
+    target_size_raw_px = max(1, int(round(target_fov_um / target_mpp)))
+    context_input_size_px = snap_size_to_patch_multiple(
+        size_px=context_size_raw_px,
+        patch_size=patch_size,
+    )
+    target_input_size_px = snap_size_to_patch_multiple(
+        size_px=target_size_raw_px,
+        patch_size=patch_size,
+    )
+    if context_input_size_px != context_size_raw_px:
+        logger.info(
+            "Snapped context size to patch multiple: raw=%d snapped=%d patch=%d",
+            context_size_raw_px,
+            context_input_size_px,
+            patch_size,
+        )
+    if target_input_size_px != target_size_raw_px:
+        logger.info(
+            "Snapped target size to patch multiple: raw=%d snapped=%d patch=%d",
+            target_size_raw_px,
+            target_input_size_px,
+            patch_size,
+        )
 
     # -- OPTIMIZATION
     ema = args["optimization"]["ema"]
@@ -144,6 +168,8 @@ def main(args, resume_preempt: bool = False):
     args["data"]["batch_size_per_gpu"] = batch_size_per_gpu
     args["data"]["global_batch_size"] = global_batch_size
     args["data"]["world_size"] = world_size
+    args["data"]["context_input_size_px"] = context_input_size_px
+    args["data"]["target_input_size_px"] = target_input_size_px
 
     wandb_cfg = dict(args.get("wandb", {}) or {})
     wandb_enabled = rank == 0 and bool(wandb_cfg.get("enable", False))
@@ -180,10 +206,10 @@ def main(args, resume_preempt: bool = False):
     encoder, predictor = init_model(
         device=device,
         patch_size=patch_size,
-        crop_size=crop_size,
+        crop_size=context_input_size_px,
         pred_depth=pred_depth,
         pred_emb_dim=pred_emb_dim,
-        model_name=model_name,
+        architecture=architecture,
     )
     target_encoder = copy.deepcopy(encoder)
 
@@ -195,7 +221,6 @@ def main(args, resume_preempt: bool = False):
         rank=rank,
         drop_last=True,
         anchor_catalog_csv=anchor_catalog_csv,
-        crop_size=crop_size,
         patch_size=patch_size,
         context_mpp=context_mpp,
         target_mpp=target_mpp,

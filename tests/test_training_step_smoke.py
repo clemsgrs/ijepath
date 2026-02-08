@@ -10,20 +10,22 @@ from ijepath.train_cross_resolution_jepa import (
 
 def test_training_step_smoke():
     device = torch.device("cpu")
+    context_input_size_px = 224
+    target_input_size_px = 112
 
     encoder, predictor = init_model(
         device=device,
         patch_size=16,
-        model_name="vit_tiny",
-        crop_size=224,
+        architecture="vit_tiny",
+        crop_size=context_input_size_px,
         pred_depth=3,
         pred_emb_dim=192,
     )
     target_encoder, _ = init_model(
         device=device,
         patch_size=16,
-        model_name="vit_tiny",
-        crop_size=224,
+        architecture="vit_tiny",
+        crop_size=target_input_size_px,
         pred_depth=3,
         pred_emb_dim=192,
     )
@@ -31,7 +33,7 @@ def test_training_step_smoke():
         p.requires_grad = False
 
     collator = ContextTargetFootprintMaskCollator(
-        input_size=224,
+        input_size=context_input_size_px,
         patch_size=16,
         nenc=1,
         min_keep=4,
@@ -41,8 +43,8 @@ def test_training_step_smoke():
     for i in range(2):
         batch.append(
             {
-                "context_image": torch.rand(3, 224, 224),
-                "target_images": torch.rand(4, 3, 224, 224),
+                "context_image": torch.rand(3, context_input_size_px, context_input_size_px),
+                "target_images": torch.rand(4, 3, target_input_size_px, target_input_size_px),
                 "target_boxes_in_context_pixels": torch.tensor(
                     [
                         [32.0, 32.0, 96.0, 96.0],

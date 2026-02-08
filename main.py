@@ -10,6 +10,7 @@ import argparse
 import multiprocessing as mp
 
 import os
+from pathlib import Path
 
 from ijepath.config_logging import render_config_yaml
 from ijepath.utils.distributed import init_distributed
@@ -17,7 +18,7 @@ from ijepath.config_loading import load_training_config
 from ijepath.utils.log_utils import setup_logging
 from ijepath.train import main as app_main
 
-DEFAULT_CONFIG_PATH = "configs/defaults.yaml"
+DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parent / "configs" / "defaults.yaml")
 
 parser = argparse.ArgumentParser()
 parser.add_argument(

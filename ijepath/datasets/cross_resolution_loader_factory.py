@@ -1,7 +1,10 @@
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-from ijepath.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
+from ijepath.datasets.cross_resolution_wsi_dataset import (
+    CrossResolutionWSIDataset,
+    snap_size_to_patch_multiple,
+)
 from ijepath.masks.context_target_footprint_mask_collator import ContextTargetFootprintMaskCollator
 
 
@@ -13,7 +16,6 @@ def make_cross_resolution_loader(
     rank: int,
     drop_last: bool,
     anchor_catalog_csv: str,
-    crop_size: int,
     patch_size: int,
     context_mpp: float,
     target_mpp: float,
@@ -31,13 +33,18 @@ def make_cross_resolution_loader(
     backend: str = "openslide",
     samples_per_epoch: int | None = None,
 ):
+    context_size_raw_px = max(1, int(round(float(context_fov_um) / float(context_mpp))))
+    context_input_size_px = snap_size_to_patch_multiple(
+        size_px=context_size_raw_px,
+        patch_size=int(patch_size),
+    )
     dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=anchor_catalog_csv,
-        crop_size=crop_size,
         context_mpp=context_mpp,
         target_mpp=target_mpp,
         context_fov_um=context_fov_um,
         target_fov_um=target_fov_um,
+        patch_size=patch_size,
         targets_per_context=targets_per_context,
         seed=seed,
         spacing_tolerance=spacing_tolerance,
@@ -57,7 +64,7 @@ def make_cross_resolution_loader(
     )
 
     collator = ContextTargetFootprintMaskCollator(
-        input_size=crop_size,
+        input_size=context_input_size_px,
         patch_size=patch_size,
         nenc=num_enc_masks,
         min_keep=min_keep,

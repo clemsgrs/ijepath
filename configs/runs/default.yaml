@@ -5,10 +5,9 @@
 
 data:
   # Batch/memory/runtime (defaults from defaults.yaml).
-  batch_size_per_gpu: 64  # Per-GPU microbatch. Global batch = batch_size_per_gpu * world_size.
+  batch_size_per_gpu: 32  # Per-GPU microbatch. Global batch = batch_size_per_gpu * world_size.
   pin_mem: true
   num_workers: 8
-  crop_size: 224  # Final model input size for both context and targets.
   samples_per_epoch: 200000  # Set null for strict one-pass-per-epoch semantics.
   seed: 0
   wsi_backend: openslide
@@ -21,6 +20,9 @@ data:
 
   # Geometry and spacing are usually provided by the profile config.
   # Keep these unset here unless you intentionally override profile values.
+  # Final model tensor sizes are derived as nearest multiples of meta.patch_size:
+  # context_px = snap(round(context_fov_um / context_mpp), patch_size)
+  # target_px = snap(round(target_fov_um / target_mpp), patch_size)
   context_mpp: null
   target_mpp: null
   context_fov_um: null
@@ -36,6 +38,32 @@ data:
   # Requested-vs-source spacing matching tolerance.
   spacing_tolerance: 0.05
 
+meta:
+  copy_data: false
+  load_checkpoint: false
+  architecture: vit_small
+  patch_size: 16
+  pred_depth: 3
+  pred_emb_dim: 192
+  read_checkpoint: null
+  use_bfloat16: true
+
+mask:
+  num_enc_masks: 1
+  num_pred_masks: null  # Null => auto-set to data.targets_per_context at config load time.
+  min_keep: 16
+
+optimization:
+  ema: [0.996, 1.0]
+  epochs: 100
+  final_lr: 1.0e-06
+  final_weight_decay: 0.1
+  ipe_scale: 1.0
+  lr: 0.0002
+  start_lr: 0.00002
+  warmup: 0.1
+  weight_decay: 0.04
+
 logging:
   folder: outputs/run
   write_tag: jepa-run
@@ -49,29 +77,3 @@ wandb:
   dir: null
   group: null
   resume_id: null
-
-mask:
-  patch_size: 16
-  num_enc_masks: 1
-  num_pred_masks: null  # Null => auto-set to data.targets_per_context at config load time.
-  min_keep: 16
-
-meta:
-  copy_data: false
-  load_checkpoint: false
-  model_name: vit_small
-  pred_depth: 3
-  pred_emb_dim: 192
-  read_checkpoint: null
-  use_bfloat16: true
-
-optimization:
-  ema: [0.996, 1.0]
-  epochs: 100
-  final_lr: 1.0e-06
-  final_weight_decay: 0.1
-  ipe_scale: 1.0
-  lr: 0.0002
-  start_lr: 0.00002
-  warmup: 0.1
-  weight_decay: 0.04

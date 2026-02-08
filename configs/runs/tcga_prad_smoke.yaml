@@ -4,16 +4,16 @@ data:
   anchor_catalog_csv: data/tcga-prad/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv
   samples_per_epoch: 8
 
-logging:
-  folder: outputs/tcga-prad-smoke
-  write_tag: jepa-smoke
-
-wandb:
-  enable: false
-
 meta:
   use_bfloat16: false
   load_checkpoint: false
 
 optimization:
   epochs: 1
+
+logging:
+  folder: outputs/tcga-prad-smoke
+  write_tag: jepa-smoke
+
+wandb:
+  enable: false

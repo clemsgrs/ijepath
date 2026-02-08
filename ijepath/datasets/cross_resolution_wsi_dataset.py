@@ -17,17 +17,31 @@ IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
+def snap_size_to_patch_multiple(size_px: int, patch_size: int) -> int:
+    """Snap size to nearest patch-size multiple (ties round down)."""
+    if patch_size <= 0:
+        raise ValueError("patch_size must be > 0")
+    size = max(1, int(size_px))
+    lower = (size // patch_size) * patch_size
+    upper = ((size + patch_size - 1) // patch_size) * patch_size
+    lower = max(int(patch_size), int(lower))
+    upper = max(int(patch_size), int(upper))
+    if (size - lower) <= (upper - size):
+        return int(lower)
+    return int(upper)
+
+
 class CrossResolutionWSIDataset(Dataset):
     """Online context/target extraction dataset from a profile-specific anchor catalog."""
 
     def __init__(
         self,
         anchor_catalog_csv: str,
-        crop_size: int,
         context_mpp: float,
         target_mpp: float,
         context_fov_um: float,
         target_fov_um: float,
+        patch_size: int,
         targets_per_context: int,
         seed: int,
         spacing_tolerance: float = 0.05,
@@ -39,11 +53,11 @@ class CrossResolutionWSIDataset(Dataset):
         samples_per_epoch: int | None = None,
     ) -> None:
         self.anchor_catalog_csv = str(anchor_catalog_csv)
-        self.crop_size = int(crop_size)
         self.context_mpp = float(context_mpp)
         self.target_mpp = float(target_mpp)
         self.context_fov_um = float(context_fov_um)
         self.target_fov_um = float(target_fov_um)
+        self.patch_size = int(patch_size)
         self.targets_per_context = int(targets_per_context)
         self.seed = int(seed)
         self.spacing_tolerance = float(spacing_tolerance)
@@ -70,9 +84,22 @@ class CrossResolutionWSIDataset(Dataset):
         if self.min_target_tissue_fraction_step <= 0.0:
             raise ValueError("min_target_tissue_fraction_step must be > 0")
 
-        self.context_size_requested_px = max(1, int(round(self.context_fov_um / self.context_mpp)))
-        self.target_size_requested_px = max(1, int(round(self.target_fov_um / self.target_mpp)))
-        self.target_size_context_requested_px = max(1, int(round(self.target_fov_um / self.context_mpp)))
+        context_size_raw_px = max(1, int(round(self.context_fov_um / self.context_mpp)))
+        target_size_raw_px = max(1, int(round(self.target_fov_um / self.target_mpp)))
+        self.context_size_requested_px = snap_size_to_patch_multiple(
+            size_px=context_size_raw_px,
+            patch_size=self.patch_size,
+        )
+        self.target_size_requested_px = snap_size_to_patch_multiple(
+            size_px=target_size_raw_px,
+            patch_size=self.patch_size,
+        )
+        self.context_output_mpp = float(self.context_fov_um / float(self.context_size_requested_px))
+        self.target_output_mpp = float(self.target_fov_um / float(self.target_size_requested_px))
+        self.target_size_context_requested_px = max(
+            1,
+            int(round(self.target_fov_um / self.context_output_mpp)),
+        )
 
         self.anchors = self._load_anchor_rows(Path(self.anchor_catalog_csv))
         if not self.anchors:
@@ -160,20 +187,20 @@ class CrossResolutionWSIDataset(Dataset):
 
         context_source_mpp, context_mode = self._choose_source_spacing(
             spacings=reader.wsi_spacings,
-            requested_mpp=self.context_mpp,
+            requested_mpp=self.context_output_mpp,
         )
         target_source_mpp, target_mode = self._choose_source_spacing(
             spacings=reader.wsi_spacings,
-            requested_mpp=self.target_mpp,
+            requested_mpp=self.target_output_mpp,
         )
 
         context_source_size_px = max(
             1,
-            int(round(self.context_size_requested_px * self.context_mpp / context_source_mpp)),
+            int(round(self.context_size_requested_px * self.context_output_mpp / context_source_mpp)),
         )
         target_source_size_px = max(
             1,
-            int(round(self.target_size_requested_px * self.target_mpp / target_source_mpp)),
+            int(round(self.target_size_requested_px * self.target_output_mpp / target_source_mpp)),
         )
 
         plan = {
@@ -204,11 +231,11 @@ class CrossResolutionWSIDataset(Dataset):
 
         mask_source_mpp, _ = self._choose_source_spacing(
             spacings=reader.mask_spacings,
-            requested_mpp=self.context_mpp,
+            requested_mpp=self.context_output_mpp,
         )
         mask_source_size_px = max(
             1,
-            int(round(context_size_requested_px * self.context_mpp / mask_source_mpp)),
+            int(round(context_size_requested_px * self.context_output_mpp / mask_source_mpp)),
         )
         mask_patch = reader.get_patch_by_center_level0(
             center_x_level0=center_x_level0,
@@ -394,7 +421,7 @@ class CrossResolutionWSIDataset(Dataset):
         center_y_level0 = int(float(anchor["center_y_level0"]))
         target_margin_um = float(anchor.get("target_margin_um", 16.0))
         target_margin_context_px = max(
-            int(round(target_margin_um / self.context_mpp)),
+            int(round(target_margin_um / self.context_output_mpp)),
             target_size_context_requested_px // 2,
         )
         target_margin_context_px = min(target_margin_context_px, max(1, context_size_requested_px // 2 - 1))
@@ -438,13 +465,13 @@ class CrossResolutionWSIDataset(Dataset):
 
         context_size_level0 = spacing_pixels_to_level0_pixels(
             size_pixels_at_spacing=context_size_requested_px,
-            spacing=self.context_mpp,
+            spacing=self.context_output_mpp,
             spacing_at_level0=float(anchor["wsi_level0_spacing_mpp"]),
         )
         context_x0_level0 = center_x_level0 - context_size_level0 // 2
         context_y0_level0 = center_y_level0 - context_size_level0 // 2
 
-        scale_context_px_to_level0 = self.context_mpp / float(anchor["wsi_level0_spacing_mpp"])
+        scale_context_px_to_level0 = self.context_output_mpp / float(anchor["wsi_level0_spacing_mpp"])
 
         target_patches = []
         for box in boxes_context_px:
@@ -470,25 +497,13 @@ class CrossResolutionWSIDataset(Dataset):
                 )
             target_patches.append(target_patch)
 
-        context_resized = cv2.resize(
-            context_patch,
-            (self.crop_size, self.crop_size),
-            interpolation=cv2.INTER_LINEAR,
-        )
-        target_resized = [
-            cv2.resize(tile, (self.crop_size, self.crop_size), interpolation=cv2.INTER_LINEAR)
-            for tile in target_patches
-        ]
-
-        boxes_resized = boxes_context_px * (float(self.crop_size) / float(context_size_requested_px))
-
-        context_tensor = self._normalize_to_tensor(context_resized)
-        target_tensors = torch.stack([self._normalize_to_tensor(tile) for tile in target_resized], dim=0)
+        context_tensor = self._normalize_to_tensor(context_patch)
+        target_tensors = torch.stack([self._normalize_to_tensor(tile) for tile in target_patches], dim=0)
 
         return {
             "context_image": context_tensor,
             "target_images": target_tensors,
-            "target_boxes_in_context_pixels": torch.as_tensor(boxes_resized, dtype=torch.float32),
+            "target_boxes_in_context_pixels": torch.as_tensor(boxes_context_px, dtype=torch.float32),
             "sample_metadata": {
                 "slide_id": anchor["slide_id"],
                 "anchor_id": anchor["anchor_id"],
@@ -496,8 +511,8 @@ class CrossResolutionWSIDataset(Dataset):
                 "dataset_epoch": int(self.current_epoch),
                 "requested_context_mpp": self.context_mpp,
                 "requested_target_mpp": self.target_mpp,
-                "output_context_mpp": self.context_mpp,
-                "output_target_mpp": self.target_mpp,
+                "output_context_mpp": self.context_output_mpp,
+                "output_target_mpp": self.target_output_mpp,
                 "source_context_mpp": context_source_mpp,
                 "source_target_mpp": target_source_mpp,
                 # Backward compatibility aliases for older scripts.
@@ -510,6 +525,8 @@ class CrossResolutionWSIDataset(Dataset):
                 "target_size_target_px_at_effective_spacing": target_source_size_px,
                 "context_size_px_requested_spacing": context_size_requested_px,
                 "target_size_px_requested_spacing": target_size_requested_px,
+                "context_input_size_px": context_size_requested_px,
+                "target_input_size_px": target_size_requested_px,
                 "target_tissue_fractions": None
                 if target_tissue_fractions is None
                 else [float(x) for x in target_tissue_fractions.tolist()],
