@@ -18,7 +18,7 @@ def _run(cmd: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str
 
 
 @pytest.mark.integration
-def test_pathology_end_to_end_fixture_smoke(tmp_path: Path):
+def test_end_to_end_fixture_smoke(tmp_path: Path):
     repo_root = Path(__file__).resolve().parents[1]
     python_exe = sys.executable
     assert Path(python_exe).exists(), f"python executable not found: {python_exe}"
@@ -80,7 +80,7 @@ def test_pathology_end_to_end_fixture_smoke(tmp_path: Path):
             "--slide-index",
             str(slide_index_jsonl),
             "--profile",
-            str(repo_root / "configs/pathology/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml"),
+            str(repo_root / "configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml"),
             "--output",
             str(anchor_catalog_csv),
         ],
@@ -94,16 +94,16 @@ def test_pathology_end_to_end_fixture_smoke(tmp_path: Path):
     assert len(anchor_rows) > 0
     assert all(r["profile_id"] == "ctx1p0_tgt0p5_fov512um_k4" for r in anchor_rows)
 
-    train_out_dir = outputs_dir / "pathology-test-fixture-smoke"
-    write_tag = "pathology-test-fixture-smoke"
+    train_out_dir = outputs_dir / "test-fixture-smoke"
+    write_tag = "test-fixture-smoke"
     _run(
         [
             python_exe,
             str(repo_root / "main.py"),
             "--profile-config",
-            str(repo_root / "configs/pathology/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml"),
+            str(repo_root / "configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml"),
             "--run-config",
-            str(repo_root / "configs/pathology/runs/tcga_prad_smoke.yaml"),
+            str(repo_root / "configs/runs/tcga_prad_smoke.yaml"),
             f"data.slide_manifest_csv={manifest_csv}",
             f"data.slide_metadata_index_jsonl={slide_index_jsonl}",
             f"data.anchor_catalog_csv={anchor_catalog_csv}",

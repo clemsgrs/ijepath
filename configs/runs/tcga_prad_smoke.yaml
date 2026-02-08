@@ -5,8 +5,8 @@ data:
   samples_per_epoch: 8
 
 logging:
-  folder: outputs/pathology-tcga-prad-smoke
-  write_tag: pathology-jepa-smoke
+  folder: outputs/tcga-prad-smoke
+  write_tag: jepa-smoke
 
 meta:
   use_bfloat16: false

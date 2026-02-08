@@ -1,11 +1,11 @@
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-from src.datasets.pathology_cross_resolution_wsi_dataset import PathologyCrossResolutionWSIDataset
+from src.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
 from src.masks.context_target_footprint_mask_collator import ContextTargetFootprintMaskCollator
 
 
-def make_pathology_cross_resolution_loader(
+def make_cross_resolution_loader(
     batch_size: int,
     pin_mem: bool,
     num_workers: int,
@@ -31,7 +31,7 @@ def make_pathology_cross_resolution_loader(
     backend: str = "openslide",
     samples_per_epoch: int | None = None,
 ):
-    dataset = PathologyCrossResolutionWSIDataset(
+    dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=anchor_catalog_csv,
         crop_size=crop_size,
         context_mpp=context_mpp,

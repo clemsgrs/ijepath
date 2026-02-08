@@ -2,13 +2,13 @@ import torch
 
 from src.helper import init_model
 from src.masks.context_target_footprint_mask_collator import ContextTargetFootprintMaskCollator
-from src.train_pathology_cross_resolution_jepa import (
+from src.train_cross_resolution_jepa import (
     flatten_teacher_targets_for_predictor_order,
     pool_predictor_tokens,
 )
 
 
-def test_pathology_training_step_smoke():
+def test_training_step_smoke():
     device = torch.device("cpu")
 
     encoder, predictor = init_model(

@@ -1,6 +1,6 @@
-# Pathology run template (copy/edit for a concrete training run).
+# Run template (copy/edit for a concrete training run).
 # This file is merged on top of:
-# - configs/pathology/defaults.yaml
+# - configs/defaults.yaml
 # - a chosen profile config
 
 data:
@@ -37,8 +37,8 @@ data:
   spacing_tolerance: 0.05
 
 logging:
-  folder: outputs/pathology-run
-  write_tag: pathology-jepa-run
+  folder: outputs/run
+  write_tag: jepa-run
 
 mask:
   patch_size: 16

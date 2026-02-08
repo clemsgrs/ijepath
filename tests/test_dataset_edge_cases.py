@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from src.datasets.pathology_cross_resolution_wsi_dataset import PathologyCrossResolutionWSIDataset
+from src.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
 from src.datasets.wsi_readers.wholeslidedata_reader_adapter import (
     WholeSlideDataReaderAdapter,
     spacing_pixels_to_level0_pixels,
@@ -94,7 +94,7 @@ def test_dataset_choose_source_spacing_prefers_finer_when_requested_missing(tmp_
         },
     )
 
-    dataset = PathologyCrossResolutionWSIDataset(
+    dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(dummy_csv),
         crop_size=224,
         context_mpp=1.0,
@@ -136,7 +136,7 @@ def test_dataset_border_anchor_sample_shapes(tmp_path):
         },
     )
 
-    dataset = PathologyCrossResolutionWSIDataset(
+    dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(anchor_csv),
         crop_size=224,
         context_mpp=1.0,
@@ -174,7 +174,7 @@ def test_target_sampling_respects_min_tissue_fraction(tmp_path):
             "target_margin_um": 8.0,
         },
     )
-    dataset = PathologyCrossResolutionWSIDataset(
+    dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(dummy_csv),
         crop_size=224,
         context_mpp=1.0,
@@ -223,7 +223,7 @@ def test_target_sampling_returns_none_when_threshold_is_impossible(tmp_path):
             "target_margin_um": 8.0,
         },
     )
-    dataset = PathologyCrossResolutionWSIDataset(
+    dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(dummy_csv),
         crop_size=224,
         context_mpp=1.0,
@@ -264,7 +264,7 @@ def test_rng_seed_varies_across_epochs_for_same_index(tmp_path):
         },
     )
 
-    dataset = PathologyCrossResolutionWSIDataset(
+    dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(dummy_csv),
         crop_size=224,
         context_mpp=1.0,
@@ -350,7 +350,7 @@ def test_getitem_skip_slide_policy_exhausts_slide_before_switching_slides(tmp_pa
             ]
         )
 
-    dataset = PathologyCrossResolutionWSIDataset(
+    dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(anchor_csv),
         crop_size=224,
         context_mpp=1.0,
@@ -392,7 +392,7 @@ def test_getitem_lower_threshold_policy_relaxes_threshold_until_success(tmp_path
         },
     )
 
-    dataset = PathologyCrossResolutionWSIDataset(
+    dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(anchor_csv),
         crop_size=224,
         context_mpp=1.0,
@@ -439,7 +439,7 @@ def test_getitem_lower_threshold_policy_raises_if_no_threshold_works(tmp_path):
         },
     )
 
-    dataset = PathologyCrossResolutionWSIDataset(
+    dataset = CrossResolutionWSIDataset(
         anchor_catalog_csv=str(anchor_csv),
         crop_size=224,
         context_mpp=1.0,
