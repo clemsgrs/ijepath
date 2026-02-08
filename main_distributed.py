@@ -71,11 +71,8 @@ class Trainer:
         load_model = self.load_model
         setup_logging(level=logging.INFO)
         logger.info(
-            "called-params default=%s profile=%s run=%s opts=%s",
-            DEFAULT_CONFIG_PATH,
-            self.profile_config,
-            self.run_config,
-            self.opts,
+            f"called-params default={DEFAULT_CONFIG_PATH} "
+            f"profile={self.profile_config} run={self.run_config} opts={self.opts}"
         )
 
         # -- load script params
@@ -86,10 +83,8 @@ class Trainer:
             opts=self.opts,
         )
         logger.info(
-            "loaded layered config (default=%s profile=%s run=%s)",
-            DEFAULT_CONFIG_PATH,
-            self.profile_config,
-            self.run_config,
+            f"loaded layered config (default={DEFAULT_CONFIG_PATH} "
+            f"profile={self.profile_config} run={self.run_config})"
         )
 
         resume_preempt = False if load_model is None else load_model

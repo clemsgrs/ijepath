@@ -61,11 +61,8 @@ def process_main(rank, profile_config, run_config, opts, world_size, visible_dev
     logger = setup_logging(level=logging.INFO if rank == 0 else logging.ERROR)
 
     logger.info(
-        "called-params default=%s profile=%s run=%s opts=%s",
-        DEFAULT_CONFIG_PATH,
-        profile_config,
-        run_config,
-        opts,
+        f"called-params default={DEFAULT_CONFIG_PATH} "
+        f"profile={profile_config} run={run_config} opts={opts}"
     )
 
     # -- load script params
@@ -76,18 +73,14 @@ def process_main(rank, profile_config, run_config, opts, world_size, visible_dev
         opts=opts,
     )
     logger.info(
-        "loaded layered config (default=%s profile=%s run=%s)",
-        DEFAULT_CONFIG_PATH,
-        profile_config,
-        run_config,
+        f"loaded layered config (default={DEFAULT_CONFIG_PATH} "
+        f"profile={profile_config} run={run_config})"
     )
 
     world_size, rank = init_distributed(rank_and_world_size=(rank, world_size))
     logger.info(
-        "Distributed context initialized: rank=%d world_size=%d device=%s",
-        rank,
-        world_size,
-        device_token,
+        f"Distributed context initialized: rank={rank} "
+        f"world_size={world_size} device={device_token}"
     )
     app_main(args=params, distributed_state=(world_size, rank))
 

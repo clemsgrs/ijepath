@@ -233,17 +233,13 @@ def main(
     )
     if context_input_size_px != context_size_raw_px:
         logger.info(
-            "Snapped context size to patch multiple: raw=%d snapped=%d patch=%d",
-            context_size_raw_px,
-            context_input_size_px,
-            patch_size,
+            f"Snapped context size to patch multiple: raw={context_size_raw_px} "
+            f"snapped={context_input_size_px} patch={patch_size}"
         )
     if target_input_size_px != target_size_raw_px:
         logger.info(
-            "Snapped target size to patch multiple: raw=%d snapped=%d patch=%d",
-            target_size_raw_px,
-            target_input_size_px,
-            patch_size,
+            f"Snapped target size to patch multiple: raw={target_size_raw_px} "
+            f"snapped={target_input_size_px} patch={patch_size}"
         )
 
     # -- OPTIMIZATION
@@ -294,28 +290,25 @@ def main(
 
     if rank == 0:
         cfg_path = log_and_write_config(args, output_dir=folder, logger=logger)
-        logger.info("Wrote resolved run config to %s", cfg_path)
+        logger.info(f"Wrote resolved run config to {cfg_path}")
         if wandb_enabled:
             wandb_run = initialize_wandb(args, key=os.environ.get("WANDB_API_KEY"))
             save_run_config_to_wandb(wandb_run, args)
             wandb_run.save(cfg_path)
 
     logger.info(
-        "Distributed context ready: rank=%d world_size=%d is_main_process=%s",
-        rank,
-        world_size,
-        rank == 0,
+        f"Distributed context ready: rank={rank} world_size={world_size} "
+        f"is_main_process={rank == 0}"
     )
     logger.info(
-        "Batch sizing: batch_size_per_gpu=%d global_batch_size=%d",
-        batch_size_per_gpu,
-        global_batch_size,
+        f"Batch sizing: batch_size_per_gpu={batch_size_per_gpu} "
+        f"global_batch_size={global_batch_size}"
     )
     logger.info(
-        "Iteration logging cadence: step_log_every_iters=%d (0 disables per-step logs)",
-        step_log_every_iters,
+        "Iteration logging cadence: "
+        f"step_log_every_iters={step_log_every_iters} (0 disables per-step logs)"
     )
-    logger.info("Checkpoint cadence: checkpoint_every_epochs=%d", checkpoint_every_epochs)
+    logger.info(f"Checkpoint cadence: checkpoint_every_epochs={checkpoint_every_epochs}")
 
     log_file = os.path.join(folder, f"{tag}_r{rank}.csv")
     save_path = os.path.join(folder, f"{tag}" + "-ep{epoch}.pth.tar")
@@ -436,7 +429,7 @@ def main(
         ) as epoch_bar:
             for epoch in epoch_bar:
                 epoch_start = time.time()
-                logger.info("Epoch %d", epoch + 1)
+                logger.info(f"Epoch {epoch + 1}")
                 if hasattr(unsupervised_dataset, "set_epoch"):
                     unsupervised_dataset.set_epoch(epoch)
                 unsupervised_sampler.set_epoch(epoch)
@@ -599,20 +592,12 @@ def main(
                     else 0.0
                 )
                 logger.info(
-                    "Epoch %d summary: loss(avg/min/max)=%.3f/%.3f/%.3f lr=%.2e wd=%.2e "
-                    "images=%d images_per_sec=%.1f iterations_per_sec=%.2f iter_time_ms=%.1f masks(avg)=%.1f/%.1f",
-                    epoch + 1,
-                    float(loss_meter.avg),
-                    float(loss_meter.min),
-                    float(loss_meter.max),
-                    float(epoch_last_lr),
-                    float(epoch_last_wd),
-                    epoch_images_seen,
-                    epoch_images_per_sec,
-                    epoch_iterations_per_sec,
-                    float(time_meter.avg),
-                    float(maskA_meter.avg),
-                    float(maskB_meter.avg),
+                    f"Epoch {epoch + 1} summary: "
+                    f"loss(avg/min/max)={float(loss_meter.avg):.3f}/{float(loss_meter.min):.3f}/{float(loss_meter.max):.3f} "
+                    f"lr={float(epoch_last_lr):.2e} wd={float(epoch_last_wd):.2e} "
+                    f"images={epoch_images_seen} images_per_sec={epoch_images_per_sec:.1f} "
+                    f"iterations_per_sec={epoch_iterations_per_sec:.2f} iter_time_ms={float(time_meter.avg):.1f} "
+                    f"masks(avg)={float(maskA_meter.avg):.1f}/{float(maskB_meter.avg):.1f}"
                 )
                 save_checkpoint(epoch + 1)
 
