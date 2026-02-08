@@ -13,8 +13,8 @@ import sys
 
 import submitit
 
-from src.config_loading import load_training_config
-from src.train import main as app_main
+from ijepath.config_loading import load_training_config
+from ijepath.train import main as app_main
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()

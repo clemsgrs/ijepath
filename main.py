@@ -12,9 +12,9 @@ import multiprocessing as mp
 import pprint
 import os
 
-from src.utils.distributed import init_distributed
-from src.config_loading import load_training_config
-from src.train import main as app_main
+from ijepath.utils.distributed import init_distributed
+from ijepath.config_loading import load_training_config
+from ijepath.train import main as app_main
 
 DEFAULT_CONFIG_PATH = "configs/defaults.yaml"
 

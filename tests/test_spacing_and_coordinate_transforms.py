@@ -1,6 +1,6 @@
 import math
 
-from src.datasets.wsi_readers.wholeslidedata_reader_adapter import (
+from ijepath.datasets.wsi_readers.wholeslidedata_reader_adapter import (
     context_box_from_center_level0,
     level0_pixels_to_spacing_pixels,
     spacing_pixels_to_level0_pixels,

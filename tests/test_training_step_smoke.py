@@ -1,8 +1,8 @@
 import torch
 
-from src.helper import init_model
-from src.masks.context_target_footprint_mask_collator import ContextTargetFootprintMaskCollator
-from src.train_cross_resolution_jepa import (
+from ijepath.helper import init_model
+from ijepath.masks.context_target_footprint_mask_collator import ContextTargetFootprintMaskCollator
+from ijepath.train_cross_resolution_jepa import (
     flatten_teacher_targets_for_predictor_order,
     pool_predictor_tokens,
 )

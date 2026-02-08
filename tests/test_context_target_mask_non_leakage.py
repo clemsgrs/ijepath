@@ -1,6 +1,6 @@
 import torch
 
-from src.masks.context_target_footprint_mask_collator import ContextTargetFootprintMaskCollator
+from ijepath.masks.context_target_footprint_mask_collator import ContextTargetFootprintMaskCollator
 
 
 def test_pathology_context_target_mask_non_leakage():
