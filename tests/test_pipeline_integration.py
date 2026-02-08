@@ -125,5 +125,16 @@ def test_end_to_end_fixture_smoke(tmp_path: Path):
     with log_path.open("r", newline="", encoding="utf-8") as f:
         train_rows = list(csv.DictReader(f))
     assert len(train_rows) > 0
+    expected_columns = {
+        "epoch",
+        "iteration",
+        "loss",
+        "context_keep_tokens",
+        "target_predict_tokens",
+        "iteration_time_ms",
+        "learning_rate",
+        "weight_decay",
+    }
+    assert expected_columns.issubset(set(train_rows[0].keys()))
     losses = [float(r["loss"]) for r in train_rows]
     assert all(loss == loss and loss != float("inf") and loss != float("-inf") for loss in losses)

@@ -71,9 +71,14 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 
 # Merged resolved config is saved automatically to:
 # outputs/<run-folder>/params-ijepa.yaml
+# Training step CSV columns are standardized:
+# epoch, iteration, loss, context_keep_tokens, target_predict_tokens,
+# iteration_time_ms, learning_rate, weight_decay
 
 # Optional W&B logging (single log payload per epoch, x-axis=epoch):
 # ... wandb.enable=true wandb.project=<project> wandb.username=<entity>
+# Optional terminal/checkpoint logging controls:
+# ... logging.step_log_every_iters=0 logging.checkpoint_every_epochs=50
 
 # Epoch semantics:
 # - data.samples_per_epoch=null  -> one full pass on anchor_catalog rows

@@ -11,7 +11,6 @@ import os
 
 import submitit
 
-from ijepath.config_logging import render_config_yaml
 from ijepath.config_loading import load_training_config
 from ijepath.train import main as app_main
 from ijepath.utils.log_utils import setup_logging
@@ -86,8 +85,12 @@ class Trainer:
             run_config=self.run_config,
             opts=self.opts,
         )
-        logger.info('loaded params...')
-        logger.info(render_config_yaml(params))
+        logger.info(
+            "loaded layered config (default=%s profile=%s run=%s)",
+            DEFAULT_CONFIG_PATH,
+            self.profile_config,
+            self.run_config,
+        )
 
         resume_preempt = False if load_model is None else load_model
         app_main(args=params, resume_preempt=resume_preempt)

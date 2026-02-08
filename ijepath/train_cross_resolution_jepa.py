@@ -29,8 +29,8 @@ from ijepath.utils.logging import AverageMeter, CSVLogger, gpu_timer, grad_logge
 from ijepath.utils.log_utils import setup_logging
 from ijepath.utils.tensors import repeat_interleave_batch
 
-log_freq = 10
-checkpoint_freq = 50
+default_checkpoint_every_epochs = 50
+default_step_log_every_iters = 0
 
 _GLOBAL_SEED = 0
 np.random.seed(_GLOBAL_SEED)
@@ -67,7 +67,116 @@ def flatten_teacher_targets_for_predictor_order(
     return teacher
 
 
-def main(args, resume_preempt: bool = False):
+def should_log_iteration(itr: int, step_log_every_iters: int, loss: float) -> bool:
+    if np.isnan(loss) or np.isinf(loss):
+        return True
+    if step_log_every_iters <= 0:
+        return False
+    return (itr % step_log_every_iters) == 0
+
+
+def resolve_checkpoint_every_epochs(logging_cfg: dict) -> int:
+    checkpoint_every_epochs = int(
+        logging_cfg.get("checkpoint_every_epochs", default_checkpoint_every_epochs)
+    )
+    if checkpoint_every_epochs <= 0:
+        raise ValueError("logging.checkpoint_every_epochs must be > 0")
+    return checkpoint_every_epochs
+
+
+def build_epoch_train_results(
+    *,
+    loss_avg: float,
+    loss_min: float,
+    loss_max: float,
+    mask_a: float,
+    mask_b: float,
+    iter_time_ms: float,
+    epoch_time_s: float,
+    images_seen: int,
+    images_per_sec: float,
+    iterations_per_sec: float,
+    lr: float,
+    wd: float,
+    global_batch_size: int,
+) -> dict[str, float | int]:
+    return {
+        "loss": float(loss_avg),
+        "loss_min": float(loss_min),
+        "loss_max": float(loss_max),
+        "mask_a": float(mask_a),
+        "mask_b": float(mask_b),
+        "iter_time_ms": float(iter_time_ms),
+        "epoch_time_s": float(epoch_time_s),
+        "images_seen": int(images_seen),
+        "images_per_sec": float(images_per_sec),
+        "iterations_per_sec": float(iterations_per_sec),
+        "lr": float(lr),
+        "wd": float(wd),
+        "global_batch_size": int(global_batch_size),
+    }
+
+
+def get_train_step_csv_columns() -> tuple[tuple[str, str], ...]:
+    return (
+        ("%d", "epoch"),
+        ("%d", "iteration"),
+        ("%.5f", "loss"),
+        ("%.5f", "context_keep_tokens"),
+        ("%.5f", "target_predict_tokens"),
+        ("%.3f", "iteration_time_ms"),
+        ("%.8f", "learning_rate"),
+        ("%.8f", "weight_decay"),
+    )
+
+
+def build_step_log_line(
+    *,
+    epoch: int,
+    iteration: int,
+    loss_avg: float,
+    context_keep_tokens: float,
+    target_predict_tokens: float,
+    weight_decay: float,
+    learning_rate: float,
+    max_memory_mb: float,
+    iteration_time_ms: float,
+) -> str:
+    return (
+        f"epoch={int(epoch)} iteration={int(iteration)} "
+        f"loss_avg={float(loss_avg):.3f} "
+        f"context_keep_tokens={float(context_keep_tokens):.1f} "
+        f"target_predict_tokens={float(target_predict_tokens):.1f} "
+        f"weight_decay={float(weight_decay):.2e} "
+        f"learning_rate={float(learning_rate):.2e} "
+        f"max_memory_mb={float(max_memory_mb):.2e} "
+        f"iteration_time_ms={float(iteration_time_ms):.1f}"
+    )
+
+
+def build_grad_stats_log_line(
+    *,
+    epoch: int,
+    iteration: int,
+    first_layer_grad_norm: float,
+    last_layer_grad_norm: float,
+    grad_min: float,
+    grad_max: float,
+) -> str:
+    return (
+        f"epoch={int(epoch)} iteration={int(iteration)} "
+        f"first_layer_grad_norm={float(first_layer_grad_norm):.2e} "
+        f"last_layer_grad_norm={float(last_layer_grad_norm):.2e} "
+        f"grad_norm_min={float(grad_min):.2e} "
+        f"grad_norm_max={float(grad_max):.2e}"
+    )
+
+
+def main(
+    args,
+    resume_preempt: bool = False,
+    distributed_state: tuple[int, int] | None = None,
+):
     # -- META
     use_bfloat16 = args["meta"]["use_bfloat16"]
     architecture = args["meta"]["architecture"]
@@ -151,6 +260,12 @@ def main(args, resume_preempt: bool = False):
     # -- LOGGING
     folder = args["logging"]["folder"]
     tag = args["logging"]["write_tag"]
+    step_log_every_iters = int(
+        args["logging"].get("step_log_every_iters", default_step_log_every_iters)
+    )
+    if step_log_every_iters < 0:
+        raise ValueError("logging.step_log_every_iters must be >= 0")
+    checkpoint_every_epochs = resolve_checkpoint_every_epochs(args["logging"])
 
     os.makedirs(folder, exist_ok=True)
 
@@ -159,7 +274,10 @@ def main(args, resume_preempt: bool = False):
     except Exception:
         pass
 
-    world_size, rank = init_distributed()
+    if distributed_state is None:
+        world_size, rank = init_distributed()
+    else:
+        world_size, rank = int(distributed_state[0]), int(distributed_state[1])
     logger_level = logging.INFO if rank == 0 else logging.ERROR
     setup_logging(output=folder, level=logger_level)
 
@@ -176,32 +294,35 @@ def main(args, resume_preempt: bool = False):
 
     if rank == 0:
         cfg_path = log_and_write_config(args, output_dir=folder, logger=logger)
+        logger.info("Wrote resolved run config to %s", cfg_path)
         if wandb_enabled:
             wandb_run = initialize_wandb(args, key=os.environ.get("WANDB_API_KEY"))
             save_run_config_to_wandb(wandb_run, args)
             wandb_run.save(cfg_path)
 
-    logger.info(f"Initialized (rank/world-size) {rank}/{world_size}")
     logger.info(
-        "Batch sizing: per_gpu=%d global=%d",
+        "Distributed context ready: rank=%d world_size=%d is_main_process=%s",
+        rank,
+        world_size,
+        rank == 0,
+    )
+    logger.info(
+        "Batch sizing: batch_size_per_gpu=%d global_batch_size=%d",
         batch_size_per_gpu,
         global_batch_size,
     )
+    logger.info(
+        "Iteration logging cadence: step_log_every_iters=%d (0 disables per-step logs)",
+        step_log_every_iters,
+    )
+    logger.info("Checkpoint cadence: checkpoint_every_epochs=%d", checkpoint_every_epochs)
 
     log_file = os.path.join(folder, f"{tag}_r{rank}.csv")
     save_path = os.path.join(folder, f"{tag}" + "-ep{epoch}.pth.tar")
     latest_path = os.path.join(folder, f"{tag}-latest.pth.tar")
     load_path = os.path.join(folder, r_file) if (load_model and r_file is not None) else latest_path
 
-    csv_logger = CSVLogger(
-        log_file,
-        ("%d", "epoch"),
-        ("%d", "itr"),
-        ("%.5f", "loss"),
-        ("%.5f", "mask-A"),
-        ("%.5f", "mask-B"),
-        ("%d", "time (ms)"),
-    )
+    csv_logger = CSVLogger(log_file, *get_train_step_csv_columns())
 
     encoder, predictor = init_model(
         device=device,
@@ -299,7 +420,7 @@ def main(args, resume_preempt: bool = False):
         }
         if rank == 0:
             torch.save(save_dict, latest_path)
-            if (epoch + 1) % checkpoint_freq == 0:
+            if (epoch + 1) % checkpoint_every_epochs == 0:
                 torch.save(save_dict, save_path.format(epoch=f"{epoch + 1}"))
 
     try:
@@ -332,16 +453,18 @@ def main(args, resume_preempt: bool = False):
                 else:
                     epoch_log = {}
 
+                images_per_iter = int(global_batch_size)
+                epoch_images_target = int(ipe * images_per_iter)
                 with tqdm.tqdm(
-                    unsupervised_loader,
+                    total=epoch_images_target,
                     desc=f"Epoch [{epoch + 1}/{num_epochs}]",
-                    unit=" it",
+                    unit=" img",
+                    unit_scale=True,
                     ncols=100,
                     leave=False,
-                    total=ipe,
                     disable=rank != 0,
                 ) as iter_bar:
-                    for itr, (batch_data, masks_enc, masks_pred) in enumerate(iter_bar):
+                    for itr, (batch_data, masks_enc, masks_pred) in enumerate(unsupervised_loader):
                         context_imgs = batch_data["context_images"].to(device, non_blocking=True)
                         target_imgs = batch_data["target_images"].to(device, non_blocking=True)
                         masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
@@ -409,65 +532,106 @@ def main(args, resume_preempt: bool = False):
                         loss_meter.update(loss)
                         time_meter.update(etime)
 
-                        csv_logger.log(epoch + 1, itr, loss, maskA_meter.val, maskB_meter.val, etime)
+                        csv_logger.log(
+                            epoch + 1,
+                            itr,
+                            loss,
+                            maskA_meter.val,
+                            maskB_meter.val,
+                            etime,
+                            epoch_last_lr,
+                            epoch_last_wd,
+                        )
                         if rank == 0:
+                            iter_bar.update(images_per_iter)
                             iter_bar.set_postfix(
                                 loss=f"{loss_meter.avg:.3f}",
                                 lr=f"{epoch_last_lr:.2e}",
                                 wd=f"{epoch_last_wd:.2e}",
                             )
 
-                        if (itr % log_freq == 0) or np.isnan(loss) or np.isinf(loss):
+                        if should_log_iteration(
+                            itr=itr,
+                            step_log_every_iters=step_log_every_iters,
+                            loss=float(loss),
+                        ):
                             if torch.cuda.is_available():
                                 max_mem_mb = torch.cuda.max_memory_allocated() / 1024.0**2
                             else:
                                 max_mem_mb = 0.0
                             logger.info(
-                                "[%d, %5d] loss: %.3f masks: %.1f %.1f [wd: %.2e] [lr: %.2e] [mem: %.2e] (%.1f ms)"
-                                % (
-                                    epoch + 1,
-                                    itr,
-                                    loss_meter.avg,
-                                    maskA_meter.avg,
-                                    maskB_meter.avg,
-                                    epoch_last_wd,
-                                    epoch_last_lr,
-                                    max_mem_mb,
-                                    time_meter.avg,
+                                build_step_log_line(
+                                    epoch=epoch + 1,
+                                    iteration=itr,
+                                    loss_avg=float(loss_meter.avg),
+                                    context_keep_tokens=float(maskA_meter.avg),
+                                    target_predict_tokens=float(maskB_meter.avg),
+                                    weight_decay=float(epoch_last_wd),
+                                    learning_rate=float(epoch_last_lr),
+                                    max_memory_mb=float(max_mem_mb),
+                                    iteration_time_ms=float(time_meter.avg),
                                 )
                             )
                             if grad_stats is not None:
                                 logger.info(
-                                    "[%d, %5d] grad_stats: [%.2e %.2e] (%.2e, %.2e)"
-                                    % (
-                                        epoch + 1,
-                                        itr,
-                                        grad_stats.first_layer,
-                                        grad_stats.last_layer,
-                                        grad_stats.min,
-                                        grad_stats.max,
+                                    build_grad_stats_log_line(
+                                        epoch=epoch + 1,
+                                        iteration=itr,
+                                        first_layer_grad_norm=float(grad_stats.first_layer),
+                                        last_layer_grad_norm=float(grad_stats.last_layer),
+                                        grad_min=float(grad_stats.min),
+                                        grad_max=float(grad_stats.max),
                                     )
                                 )
 
                         assert not np.isnan(loss), "loss is nan"
 
                 epoch_seconds = time.time() - epoch_start
-                logger.info("avg. loss %.3f", loss_meter.avg)
+                epoch_images_seen = int(ipe * global_batch_size)
+                epoch_images_per_sec = (
+                    float(epoch_images_seen) / float(epoch_seconds)
+                    if epoch_seconds > 0
+                    else 0.0
+                )
+                epoch_iterations_per_sec = (
+                    float(ipe) / float(epoch_seconds)
+                    if epoch_seconds > 0
+                    else 0.0
+                )
+                logger.info(
+                    "Epoch %d summary: loss(avg/min/max)=%.3f/%.3f/%.3f lr=%.2e wd=%.2e "
+                    "images=%d images_per_sec=%.1f iterations_per_sec=%.2f iter_time_ms=%.1f masks(avg)=%.1f/%.1f",
+                    epoch + 1,
+                    float(loss_meter.avg),
+                    float(loss_meter.min),
+                    float(loss_meter.max),
+                    float(epoch_last_lr),
+                    float(epoch_last_wd),
+                    epoch_images_seen,
+                    epoch_images_per_sec,
+                    epoch_iterations_per_sec,
+                    float(time_meter.avg),
+                    float(maskA_meter.avg),
+                    float(maskB_meter.avg),
+                )
                 save_checkpoint(epoch + 1)
 
                 if wandb_enabled:
-                    train_results = {
-                        "loss": float(loss_meter.avg),
-                        "loss_min": float(loss_meter.min),
-                        "loss_max": float(loss_meter.max),
-                        "mask_a": float(maskA_meter.avg),
-                        "mask_b": float(maskB_meter.avg),
-                        "iter_time_ms": float(time_meter.avg),
-                        "epoch_time_s": float(epoch_seconds),
-                        "lr": float(epoch_last_lr),
-                        "wd": float(epoch_last_wd),
-                        "global_batch_size": int(global_batch_size),
-                    }
+                    train_results = build_epoch_train_results(
+                        loss_avg=float(loss_meter.avg),
+                        loss_min=float(loss_meter.min),
+                        loss_max=float(loss_meter.max),
+                        mask_a=float(maskA_meter.avg),
+                        mask_b=float(maskB_meter.avg),
+                        iter_time_ms=float(time_meter.avg),
+                        epoch_time_s=float(epoch_seconds),
+                        images_seen=int(epoch_images_seen),
+                        images_per_sec=float(epoch_images_per_sec),
+                        iterations_per_sec=float(epoch_iterations_per_sec),
+                        lr=float(epoch_last_lr),
+                        wd=float(epoch_last_wd),
+                        global_batch_size=int(global_batch_size),
+                    )
                     update_log_dict("train", train_results, epoch_log, step="epoch")
                     log_epoch_dict(epoch_log, epoch=epoch + 1)
     finally:

@@ -12,7 +12,6 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 
-from ijepath.config_logging import render_config_yaml
 from ijepath.utils.distributed import init_distributed
 from ijepath.config_loading import load_training_config
 from ijepath.utils.log_utils import setup_logging
@@ -76,13 +75,21 @@ def process_main(rank, profile_config, run_config, opts, world_size, visible_dev
         run_config=run_config,
         opts=opts,
     )
-    logger.info('loaded params...')
-    if rank == 0:
-        logger.info(render_config_yaml(params))
+    logger.info(
+        "loaded layered config (default=%s profile=%s run=%s)",
+        DEFAULT_CONFIG_PATH,
+        profile_config,
+        run_config,
+    )
 
     world_size, rank = init_distributed(rank_and_world_size=(rank, world_size))
-    logger.info(f'Running... (rank: {rank}/{world_size})')
-    app_main(args=params)
+    logger.info(
+        "Distributed context initialized: rank=%d world_size=%d device=%s",
+        rank,
+        world_size,
+        device_token,
+    )
+    app_main(args=params, distributed_state=(world_size, rank))
 
 
 if __name__ == '__main__':
