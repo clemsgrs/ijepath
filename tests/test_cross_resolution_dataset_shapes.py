@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from src.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
+from ijepath.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
 
 
 def test_cross_resolution_dataset_shapes_and_determinism():

@@ -14,8 +14,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
-from src.datasets.wsi_readers.wholeslidedata_reader_adapter import (
+from ijepath.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
+from ijepath.datasets.wsi_readers.wholeslidedata_reader_adapter import (
     WholeSlideDataReaderAdapter,
     spacing_pixels_to_level0_pixels,
 )

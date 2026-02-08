@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from src.config_loading import load_training_config
+from ijepath.config_loading import load_training_config
 
 
 def _write_yaml(path: Path, payload: dict) -> None:

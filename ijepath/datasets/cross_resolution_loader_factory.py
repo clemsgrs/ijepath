@@ -1,8 +1,8 @@
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-from src.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
-from src.masks.context_target_footprint_mask_collator import ContextTargetFootprintMaskCollator
+from ijepath.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
+from ijepath.masks.context_target_footprint_mask_collator import ContextTargetFootprintMaskCollator
 
 
 def make_cross_resolution_loader(

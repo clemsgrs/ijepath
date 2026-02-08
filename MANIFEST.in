@@ -1,0 +1,3 @@
+include configs/*.yaml
+recursive-include configs/profiles *.yaml
+recursive-include configs/runs *.yaml

@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from src.datasets.wsi_readers.wholeslidedata_reader_adapter import (
+from ijepath.datasets.wsi_readers.wholeslidedata_reader_adapter import (
     WholeSlideDataReaderAdapter,
     spacing_pixels_to_level0_pixels,
 )

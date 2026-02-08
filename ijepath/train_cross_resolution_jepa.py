@@ -10,13 +10,13 @@ import torch.nn.functional as F
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 
-from src.datasets.cross_resolution_loader_factory import (
+from ijepath.datasets.cross_resolution_loader_factory import (
     make_cross_resolution_loader,
 )
-from src.helper import init_model, init_opt, load_checkpoint
-from src.utils.distributed import AllReduce, init_distributed
-from src.utils.logging import AverageMeter, CSVLogger, gpu_timer, grad_logger
-from src.utils.tensors import repeat_interleave_batch
+from ijepath.helper import init_model, init_opt, load_checkpoint
+from ijepath.utils.distributed import AllReduce, init_distributed
+from ijepath.utils.logging import AverageMeter, CSVLogger, gpu_timer, grad_logger
+from ijepath.utils.tensors import repeat_interleave_batch
 
 log_freq = 10
 checkpoint_freq = 50
@@ -376,4 +376,4 @@ def main(args, resume_preempt: bool = False):
 
 
 if __name__ == "__main__":
-    raise SystemExit("Use src.train.main entrypoint")
+    raise SystemExit("Use ijepath.train.main entrypoint")
