@@ -40,6 +40,16 @@ logging:
   folder: outputs/run
   write_tag: jepa-run
 
+wandb:
+  enable: false
+  project: ijepath
+  username: null
+  exp_name: null
+  tags: []
+  dir: null
+  group: null
+  resume_id: null
+
 mask:
   patch_size: 16
   num_enc_masks: 1

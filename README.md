@@ -72,6 +72,9 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 # Merged resolved config is saved automatically to:
 # outputs/<run-folder>/params-ijepa.yaml
 
+# Optional W&B logging (single log payload per epoch, x-axis=epoch):
+# ... wandb.enable=true wandb.project=<project> wandb.username=<entity>
+
 # Epoch semantics:
 # - data.samples_per_epoch=null  -> one full pass on anchor_catalog rows
 # - data.samples_per_epoch=<int> -> fixed virtual epoch length (e.g. smoke runs)

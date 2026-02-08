@@ -9,11 +9,12 @@ import argparse
 
 import multiprocessing as mp
 
-import pprint
 import os
 
+from ijepath.config_logging import render_config_yaml
 from ijepath.utils.distributed import init_distributed
 from ijepath.config_loading import load_training_config
+from ijepath.utils.log_utils import setup_logging
 from ijepath.train import main as app_main
 
 DEFAULT_CONFIG_PATH = "configs/defaults.yaml"
@@ -56,12 +57,8 @@ def process_main(rank, profile_config, run_config, opts, world_size, visible_dev
         os.environ.pop('CUDA_VISIBLE_DEVICES', None)
 
     import logging
-    logging.basicConfig()
-    logger = logging.getLogger()
-    if rank == 0:
-        logger.setLevel(logging.INFO)
-    else:
-        logger.setLevel(logging.ERROR)
+
+    logger = setup_logging(level=logging.INFO if rank == 0 else logging.ERROR)
 
     logger.info(
         "called-params default=%s profile=%s run=%s opts=%s",
@@ -79,8 +76,8 @@ def process_main(rank, profile_config, run_config, opts, world_size, visible_dev
         opts=opts,
     )
     logger.info('loaded params...')
-    pp = pprint.PrettyPrinter(indent=4)
-    pp.pprint(params)
+    if rank == 0:
+        logger.info(render_config_yaml(params))
 
     world_size, rank = init_distributed(rank_and_world_size=(rank, world_size))
     logger.info(f'Running... (rank: {rank}/{world_size})')

@@ -22,8 +22,10 @@ dependencies = [
 train = [
   "opencv-python",
   "submitit",
+  "tqdm",
   "torch",
   "torchvision",
+  "wandb",
   "wholeslidedata",
 ]
 dev = [

@@ -6,7 +6,6 @@
 #
 
 import logging
-import sys
 
 import torch
 
@@ -16,8 +15,7 @@ from ijepath.utils.schedulers import (
     CosineWDSchedule)
 from ijepath.utils.tensors import trunc_normal_
 
-logging.basicConfig(stream=sys.stdout, level=logging.INFO)
-logger = logging.getLogger()
+logger = logging.getLogger("ijepath")
 
 
 def load_checkpoint(
