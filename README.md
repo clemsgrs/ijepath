@@ -15,16 +15,8 @@ Standard SSL in pathology can overfit stain/scanner shortcuts. This project targ
 - `docs/pathology/README.md`
 - `docs/pathology/config-reference.md`
 
-## Example sample visualization
-<img src="assets/preview/ijepath_flow.gif" alt="Cross-resolution context-to-target correspondence" width="920" />
-
-Static companion previews:
-- `assets/preview/ijepath_flow_all_steps.png`
-- `assets/preview/ijepath_flow_zoom4.png`
-
-Anchor-specific example (TCGA-PRAD `TCGA-HC-8257`, `A001`):
-- `assets/preview/ijepath_tcga_hc_8257_a001.gif`
-<img src="assets/preview/ijepath_tcga_hc_8257_a001.gif" alt="TCGA-HC-8257 anchor A001 cross-resolution flow" width="920" />
+## Sample curation pipeline
+<img src="assets/preview/ijepath_flow.gif" alt="TCGA-HC-8257 anchor A001 cross-resolution flow" width="920" />
 
 ## Dataset structure
 Use any dataset root; below is the expected structure and contracts:
