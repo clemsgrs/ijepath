@@ -100,9 +100,12 @@ def init_model(
     encoder_params = sum(int(p.numel()) for p in encoder.parameters())
     predictor_params = sum(int(p.numel()) for p in predictor.parameters())
     logger.info(
-        f"Initialized model: architecture={architecture} patch_size={int(patch_size)} "
-        f"crop_size={int(crop_size)} encoder_params={encoder_params} "
-        f"predictor_params={predictor_params}"
+        "Initialized model:\n"
+        f" - architecture={architecture}\n"
+        f" - patch_size={int(patch_size)}\n"
+        f" - crop_size={int(crop_size)}\n"
+        f" - encoder_params={encoder_params}\n"
+        f" - predictor_params={predictor_params}"
     )
     return encoder, predictor
 

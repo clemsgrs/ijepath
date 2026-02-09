@@ -34,8 +34,8 @@ tuning:
     - type: pathorob
       enable: true
       use_for_early_stopping: true
-      early_stopping_metric: camelyon/apd_avg
-      early_stopping_mode: max
+      early_stopping_metric: camelyon_tiny/apd_avg
+      early_stopping_mode: min
       batch_size_per_gpu: ${data.batch_size_per_gpu}
       num_workers: ${data.num_workers}
       transforms:
@@ -45,12 +45,12 @@ tuning:
       datasets:
         camelyon:
           enable: false
-          manifest_csv: ${data_dir}/pathorob/camelyon/benchmark.csv
+          manifest_csv: ${tuning.data_dir}/pathorob/camelyon/benchmark.csv
           id_centers: ["RUMC", "UMCU"]
           ood_centers: ["CWZ", "RST", "LPON"]
         camelyon_tiny:
           enable: true
-          manifest_csv: ${data_dir}/pathorob/camelyon_tiny/benchmark.csv
+          manifest_csv: ${tuning.data_dir}/pathorob/camelyon_tiny/benchmark.csv
           id_centers: ["RUMC", "UMCU"]
           ood_centers: ["CWZ", "RST", "LPON"]
       ri:
