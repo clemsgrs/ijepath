@@ -96,11 +96,11 @@ class CrossResolutionWSIDataset(Dataset):
             size_px=target_size_raw_px,
             patch_size=self.patch_size,
         )
-        self.context_output_mpp = float(self.context_fov_um / float(self.context_size_requested_px))
-        self.target_output_mpp = float(self.target_fov_um / float(self.target_size_requested_px))
+        self.context_effective_mpp = float(self.context_fov_um / float(self.context_size_requested_px))
+        self.target_effective_mpp = float(self.target_fov_um / float(self.target_size_requested_px))
         self.target_size_context_requested_px = max(
             1,
-            int(round(self.target_fov_um / self.context_output_mpp)),
+            int(round(self.target_fov_um / self.context_effective_mpp)),
         )
 
         self.anchors = self._load_anchor_rows(Path(self.anchor_catalog_csv))
@@ -181,20 +181,20 @@ class CrossResolutionWSIDataset(Dataset):
 
         context_source_mpp, context_mode = self._choose_source_spacing(
             spacings=reader.wsi_spacings,
-            requested_mpp=self.context_output_mpp,
+            requested_mpp=self.context_effective_mpp,
         )
         target_source_mpp, target_mode = self._choose_source_spacing(
             spacings=reader.wsi_spacings,
-            requested_mpp=self.target_output_mpp,
+            requested_mpp=self.target_effective_mpp,
         )
 
         context_source_size_px = max(
             1,
-            int(round(self.context_size_requested_px * self.context_output_mpp / context_source_mpp)),
+            int(round(self.context_size_requested_px * self.context_effective_mpp / context_source_mpp)),
         )
         target_source_size_px = max(
             1,
-            int(round(self.target_size_requested_px * self.target_output_mpp / target_source_mpp)),
+            int(round(self.target_size_requested_px * self.target_effective_mpp / target_source_mpp)),
         )
 
         plan = {
@@ -225,11 +225,11 @@ class CrossResolutionWSIDataset(Dataset):
 
         mask_source_mpp, _ = self._choose_source_spacing(
             spacings=reader.mask_spacings,
-            requested_mpp=self.context_output_mpp,
+            requested_mpp=self.context_effective_mpp,
         )
         mask_source_size_px = max(
             1,
-            int(round(context_size_requested_px * self.context_output_mpp / mask_source_mpp)),
+            int(round(context_size_requested_px * self.context_effective_mpp / mask_source_mpp)),
         )
         mask_patch = reader.get_patch_by_center_level0(
             center_x_level0=center_x_level0,
@@ -483,7 +483,7 @@ class CrossResolutionWSIDataset(Dataset):
         center_y_level0 = int(float(anchor["center_y_level0"]))
         target_margin_um = float(anchor.get("target_margin_um", 16.0))
         target_margin_context_px = max(
-            int(round(target_margin_um / self.context_output_mpp)),
+            int(round(target_margin_um / self.context_effective_mpp)),
             target_size_context_requested_px // 2,
         )
         target_margin_context_px = min(target_margin_context_px, max(1, context_size_requested_px // 2 - 1))
@@ -527,13 +527,13 @@ class CrossResolutionWSIDataset(Dataset):
 
         context_size_level0 = spacing_pixels_to_level0_pixels(
             size_pixels_at_spacing=context_size_requested_px,
-            spacing=self.context_output_mpp,
+            spacing=self.context_effective_mpp,
             spacing_at_level0=float(anchor["wsi_level0_spacing_mpp"]),
         )
         context_x0_level0 = center_x_level0 - context_size_level0 // 2
         context_y0_level0 = center_y_level0 - context_size_level0 // 2
 
-        scale_context_px_to_level0 = self.context_output_mpp / float(anchor["wsi_level0_spacing_mpp"])
+        scale_context_px_to_level0 = self.context_effective_mpp / float(anchor["wsi_level0_spacing_mpp"])
 
         target_patches = []
         for box in boxes_context_px:
@@ -573,13 +573,10 @@ class CrossResolutionWSIDataset(Dataset):
                 "dataset_pass_index": int(self.current_pass_index),
                 "requested_context_mpp": self.context_mpp,
                 "requested_target_mpp": self.target_mpp,
-                "output_context_mpp": self.context_output_mpp,
-                "output_target_mpp": self.target_output_mpp,
+                "effective_context_mpp": self.context_effective_mpp,
+                "effective_target_mpp": self.target_effective_mpp,
                 "source_context_mpp": context_source_mpp,
                 "source_target_mpp": target_source_mpp,
-                # Backward compatibility aliases for older scripts.
-                "effective_context_mpp": context_source_mpp,
-                "effective_target_mpp": target_source_mpp,
                 "context_resolution_mode": resolution_plan["context_resolution_mode"],
                 "target_resolution_mode": resolution_plan["target_resolution_mode"],
                 "context_size_px_at_effective_spacing": context_source_size_px,

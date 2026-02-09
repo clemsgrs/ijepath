@@ -41,8 +41,8 @@ def test_build_ijepath_animation_frames_and_write_gif(tmp_path):
     sample_metadata = {
         "slide_id": "S1",
         "anchor_id": "A1",
-        "output_context_mpp": 1.0,
-        "output_target_mpp": 0.5,
+        "effective_context_mpp": 1.0,
+        "effective_target_mpp": 0.5,
     }
 
     frames, durations = mod.build_ijepath_animation_frames(

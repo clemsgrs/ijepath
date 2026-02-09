@@ -40,7 +40,6 @@ data:
   high_anchor_pass_warning_threshold: 5.0
 
 meta:
-  copy_data: false
   load_checkpoint: false
   architecture: vit_small
   patch_size: 16
@@ -76,7 +75,7 @@ tuning:
     enable: false
     patience_evals: 5  # Stop after this many non-improving tuning evaluations.
     min_evals: 3  # Minimum number of evaluations before stop condition is allowed.
-    stop_training: false
+    stop_training: false  # If true, terminate JEPA training once the early-stopping criterion is met.
     save_best_checkpoint: true
     best_checkpoint_name: best-robustness.pth.tar
 

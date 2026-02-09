@@ -56,7 +56,6 @@ def load_training_config(
     OmegaConf.resolve(cfg)
     resolved = OmegaConf.to_container(cfg, resolve=True)  # type: ignore[assignment]
     _project_profile_keys_into_data_if_missing(resolved)
-    _normalize_batch_size_keys(resolved)
     _attach_config_sources(
         resolved,
         config_file=config_file,
@@ -153,26 +152,9 @@ def _attach_config_sources(
     }
 
 
-def _normalize_batch_size_keys(cfg: dict[str, Any]) -> None:
-    data = cfg.setdefault("data", {})
-    per_gpu = data.get("batch_size_per_gpu")
-    legacy = data.get("batch_size")
-
-    if per_gpu is None and legacy is None:
-        return
-    if per_gpu is None:
-        data["batch_size_per_gpu"] = int(legacy)
-        return
-    if legacy is None:
-        return
-    if int(per_gpu) != int(legacy):
-        raise ValueError(
-            "Conflicting values for data.batch_size_per_gpu and data.batch_size: "
-            f"{per_gpu} vs {legacy}"
-        )
-
-
 def _validate_training_config(cfg: dict[str, Any]) -> None:
+    if "batch_size" in cfg.get("data", {}):
+        raise ValueError("Unsupported config value: data.batch_size")
     if "samples_per_chunk" in cfg.get("data", {}):
         raise ValueError("Unsupported config value: data.samples_per_chunk")
     if "samples_per_epoch" in cfg.get("data", {}):

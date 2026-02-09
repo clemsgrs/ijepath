@@ -140,7 +140,7 @@ pytest -m integration tests/test_pipeline_integration.py
 ```
 
 ## Notes
-- Metadata distinguishes `source_*_mpp` (pyramid read spacing) vs `output_*_mpp` (nominal requested spacing semantics).
+- Metadata distinguishes `source_*_mpp` (pyramid read spacing) vs `effective_*_mpp` (nominal requested spacing semantics).
 - Tissue-aware target fallback policies are configurable (`skip_anchor`, `skip_slide`, `lower_threshold`).
 - Target box patch-alignment is configurable via `data.align_targets_to_patch_grid`.
 

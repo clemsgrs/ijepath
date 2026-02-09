@@ -484,8 +484,8 @@ def build_flow_step_views(
         tile_size=max(130, min(188, context_size // 2)),
     )
 
-    out_ctx = float(sample_metadata.get("output_context_mpp", sample_metadata.get("requested_context_mpp")))
-    out_tgt = float(sample_metadata.get("output_target_mpp", sample_metadata.get("requested_target_mpp")))
+    out_ctx = float(sample_metadata["effective_context_mpp"])
+    out_tgt = float(sample_metadata["effective_target_mpp"])
     right_views = [
         context_with_box,
         targets_overlay,
@@ -712,7 +712,7 @@ def main() -> int:
             backend=args.wsi_backend,
             max_side=args.thumbnail_max_side,
             thumbnail_cache=thumbnail_cache,
-            context_mpp=float(sample_metadata.get("output_context_mpp", context_mpp)),
+            context_mpp=float(sample_metadata["effective_context_mpp"]),
             context_fov_um=context_fov_um,
         )
 

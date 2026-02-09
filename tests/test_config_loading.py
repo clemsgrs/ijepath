@@ -178,7 +178,7 @@ def test_layered_config_rejects_conflicting_duplicate_values_within_profile(tmp_
         )
 
 
-def test_legacy_batch_size_is_accepted_and_projected(tmp_path: Path):
+def test_legacy_batch_size_is_rejected(tmp_path: Path):
     default_cfg = tmp_path / "default.yaml"
     profile_cfg = tmp_path / "profile.yaml"
     run_cfg = tmp_path / "run.yaml"
@@ -205,9 +205,9 @@ def test_legacy_batch_size_is_accepted_and_projected(tmp_path: Path):
     _write_yaml(profile_cfg, {"data": {}})
     _write_yaml(run_cfg, {"data": {}})
 
-    cfg = load_training_config(
-        default_config=str(default_cfg),
-        profile_config=str(profile_cfg),
-        run_config=str(run_cfg),
-    )
-    assert cfg["data"]["batch_size_per_gpu"] == 6
+    with pytest.raises(ValueError, match="data.batch_size"):
+        load_training_config(
+            default_config=str(default_cfg),
+            profile_config=str(profile_cfg),
+            run_config=str(run_cfg),
+        )

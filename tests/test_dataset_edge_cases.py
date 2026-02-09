@@ -564,3 +564,75 @@ def test_getitem_lower_threshold_policy_raises_if_no_threshold_works(tmp_path):
     dataset._build_sample_from_anchor = lambda *args, **kwargs: None  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="policy=lower_threshold"):
         _ = dataset[0]
+
+
+def test_sample_metadata_uses_effective_mpp_terminology(tmp_path):
+    anchor_csv = tmp_path / "anchors.csv"
+    _write_min_anchor_csv(
+        anchor_csv,
+        {
+            "anchor_id": "a0",
+            "slide_id": "slideA",
+            "wsi_path": "/tmp/a.tif",
+            "mask_path": "",
+            "center_x_level0": 32,
+            "center_y_level0": 32,
+            "wsi_level0_spacing_mpp": 0.25,
+            "target_margin_um": 8.0,
+        },
+    )
+
+    dataset = CrossResolutionWSIDataset(
+        anchor_catalog_csv=str(anchor_csv),
+        context_mpp=1.0,
+        target_mpp=0.5,
+        context_fov_um=64.0,
+        target_fov_um=16.0,
+        patch_size=16,
+        targets_per_context=1,
+        seed=0,
+    )
+
+    class _FakeReader:
+        def get_patch_by_center_level0(
+            self,
+            *,
+            center_x_level0,
+            center_y_level0,
+            width_pixels_at_spacing,
+            height_pixels_at_spacing,
+            spacing_mpp,
+            use_mask,
+            center_is_wsi_level0=True,
+        ):
+            return np.zeros((height_pixels_at_spacing, width_pixels_at_spacing, 3), dtype=np.uint8)
+
+    dataset._get_reader = lambda row: _FakeReader()  # type: ignore[method-assign]
+    dataset._get_resolution_plan = lambda slide_id, reader: {  # type: ignore[method-assign]
+        "context_source_mpp": 1.0,
+        "target_source_mpp": 0.5,
+        "context_resolution_mode": "native_or_close",
+        "target_resolution_mode": "native_or_close",
+        "context_source_size_px": 64,
+        "target_source_size_px": 32,
+        "context_size_requested_px": 64,
+        "target_size_requested_px": 32,
+        "target_size_context_requested_px": 16,
+    }
+    dataset._extract_context_tissue_mask = lambda **kwargs: None  # type: ignore[method-assign]
+    dataset._sample_target_boxes_in_context = lambda **kwargs: (  # type: ignore[method-assign]
+        np.array([[16.0, 16.0, 32.0, 32.0]], dtype=np.float32),
+        None,
+    )
+
+    sample = dataset._build_sample_from_anchor(
+        anchor=dataset.anchors[0],
+        index=0,
+        anchor_attempt=0,
+    )
+    assert sample is not None
+    metadata = sample["sample_metadata"]
+    assert metadata["effective_context_mpp"] == 1.0
+    assert metadata["effective_target_mpp"] == 0.5
+    assert "output_context_mpp" not in metadata
+    assert "output_target_mpp" not in metadata

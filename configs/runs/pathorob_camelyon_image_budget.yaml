@@ -67,7 +67,7 @@ tuning:
     enable: true
     patience_evals: 5
     min_evals: 3
-    stop_training: false
+    stop_training: false  # If true, terminate JEPA training once the early-stopping criterion is met.
     save_best_checkpoint: true
     best_checkpoint_name: best-robustness.pth.tar
 
