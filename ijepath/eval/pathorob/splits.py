@@ -189,6 +189,12 @@ def generate_apd_splits(
             correlation_levels = get_paper_v_levels(dataset_name)
             logger.info("[APD] Using paper allocations for %s", dataset_name)
         except ValueError:
+            logger.warning(
+                "[APD] Paper mode is unavailable for dataset=%s. Falling back to custom mode "
+                "with configured correlation_levels=%s",
+                dataset_name,
+                list(correlation_levels),
+            )
             mode = "custom"
 
     all_splits: list[pd.DataFrame] = []
@@ -219,6 +225,17 @@ def generate_apd_splits(
             max_scale = float(scale_factors.min())
             target_train_total = min(int(round(paper_total * max_scale)), int(avail.sum()))
             target_train_total = max(target_train_total, len(labels) * len(centers))
+            if target_train_total != paper_total:
+                logger.warning(
+                    "[APD] Rescaling paper allocations for dataset=%s rep=%02d: "
+                    "paper_total=%d target_train_total=%d available_total=%d max_scale=%.6f",
+                    dataset_name,
+                    rep,
+                    paper_total,
+                    target_train_total,
+                    int(avail.sum()),
+                    max_scale,
+                )
         else:
             base = max(1, int(avail.min()) // 2)
             target_train_total = int(base * len(labels) * len(centers))
@@ -231,8 +248,20 @@ def generate_apd_splits(
                     # nearest available for non-paper level request
                     nearest = min(paper_allocations.keys(), key=lambda x: abs(float(x) - rho))
                     paper_alloc = paper_allocations[nearest]
-                split_matrix = scale_allocation(paper_alloc, target_train_total)
+                scaled_matrix = scale_allocation(paper_alloc, target_train_total)
+                split_matrix = scaled_matrix.copy()
                 split_matrix = np.minimum(split_matrix, avail)
+                clipped_samples = int(np.clip(scaled_matrix - split_matrix, a_min=0, a_max=None).sum())
+                if clipped_samples > 0:
+                    logger.warning(
+                        "[APD] Paper split clipping for dataset=%s rep=%02d split=%02d rho=%.2f: "
+                        "clipped_samples=%d",
+                        dataset_name,
+                        rep,
+                        split_idx + 1,
+                        rho,
+                        clipped_samples,
+                    )
                 # distribute missing counts due clipping
                 deficit = int(target_train_total - split_matrix.sum())
                 if deficit > 0:

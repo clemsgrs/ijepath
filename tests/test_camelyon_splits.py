@@ -1,3 +1,4 @@
+import logging
 import tempfile
 from pathlib import Path
 
@@ -68,3 +69,80 @@ def test_generate_apd_splits_is_deterministic_and_leak_free():
             train_slides = set(a[a["partition"] == "train"]["slide_id"].tolist())
             id_slides = set(a[a["partition"] == "id_test"]["slide_id"].tolist())
             assert len(train_slides.intersection(id_slides)) == 0
+
+
+def test_generate_apd_splits_camelyon_tiny_paper_mode_falls_back_to_custom_without_levels(caplog):
+    rows = []
+    sample_idx = 0
+    for label in ["normal", "tumor"]:
+        for center in ["RUMC", "UMCU", "CWZ", "RST", "LPON"]:
+            for slide in range(4):
+                slide_id = f"{center}_{label}_{slide}"
+                for _ in range(2):
+                    rows.append(
+                        {
+                            "sample_id": f"s{sample_idx}",
+                            "image_path": f"/tmp/fake/{sample_idx}.png",
+                            "label": label,
+                            "medical_center": center,
+                            "slide_id": slide_id,
+                        }
+                    )
+                    sample_idx += 1
+    df = pd.DataFrame(rows)
+
+    with tempfile.TemporaryDirectory() as d:
+        with caplog.at_level(logging.WARNING, logger="ijepath"):
+            out = generate_apd_splits(
+                df=df,
+                output_dir=Path(d),
+                dataset_name="camelyon_tiny",
+                repetitions=2,
+                correlation_levels=[],
+                id_centers=["RUMC", "UMCU"],
+                ood_centers=["CWZ", "RST", "LPON"],
+                id_test_fraction=0.2,
+                seed=123,
+                mode="paper",
+            )
+
+    assert len(out) == 0
+    assert any("Paper mode is unavailable for dataset=camelyon_tiny" in rec.message for rec in caplog.records)
+
+
+def test_generate_apd_splits_paper_mode_warns_when_rescaling(caplog):
+    rows = []
+    sample_idx = 0
+    for label in ["normal", "tumor"]:
+        for center in ["RUMC", "UMCU", "CWZ", "RST", "LPON"]:
+            for slide in range(3):
+                slide_id = f"{center}_{label}_{slide}"
+                rows.append(
+                    {
+                        "sample_id": f"s{sample_idx}",
+                        "image_path": f"/tmp/fake/{sample_idx}.png",
+                        "label": label,
+                        "medical_center": center,
+                        "slide_id": slide_id,
+                    }
+                )
+                sample_idx += 1
+    df = pd.DataFrame(rows)
+
+    with tempfile.TemporaryDirectory() as d:
+        with caplog.at_level(logging.WARNING, logger="ijepath"):
+            out = generate_apd_splits(
+                df=df,
+                output_dir=Path(d),
+                dataset_name="camelyon",
+                repetitions=1,
+                correlation_levels=[],
+                id_centers=["RUMC", "UMCU"],
+                ood_centers=["CWZ", "RST", "LPON"],
+                id_test_fraction=0.2,
+                seed=123,
+                mode="paper",
+            )
+
+    assert len(out) == 8
+    assert any("Rescaling paper allocations" in rec.message for rec in caplog.records)

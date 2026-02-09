@@ -58,7 +58,8 @@ tuning:
         k_candidates: [3, 5, 7, 10, 15]
       apd:
         enable: true
-        mode: paper
+        mode: custom
+        correlation_levels: [0.0, 0.14, 0.29, 0.43, 0.57, 0.71, 0.86, 1.0]
         repetitions: 3
         id_test_fraction: 0.2
       clustering:
