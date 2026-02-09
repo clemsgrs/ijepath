@@ -14,8 +14,10 @@ authors = [
 ]
 dependencies = [
   "numpy",
+  "pandas",
   "Pillow",
   "PyYAML",
+  "scikit-learn",
 ]
 
 [project.optional-dependencies]

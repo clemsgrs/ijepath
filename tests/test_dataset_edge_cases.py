@@ -349,14 +349,13 @@ def test_loader_factory_propagates_patch_alignment_toggle(tmp_path):
         min_keep=4,
         num_enc_masks=1,
         backend="openslide",
-        samples_per_epoch=1,
         align_targets_to_patch_grid=True,
     )
 
     assert dataset.align_targets_to_patch_grid is True
 
 
-def test_rng_seed_varies_across_epochs_for_same_index(tmp_path):
+def test_rng_seed_varies_across_passes_for_same_index(tmp_path):
     dummy_csv = tmp_path / "anchors.csv"
     _write_min_anchor_csv(
         dummy_csv,
@@ -387,13 +386,13 @@ def test_rng_seed_varies_across_epochs_for_same_index(tmp_path):
     seed_e0_b = dataset._rng_seed_for(index=7, anchor_attempt=2)
     assert seed_e0_a == seed_e0_b
 
-    dataset.set_epoch(1)
-    seed_e1 = dataset._rng_seed_for(index=7, anchor_attempt=2)
-    assert seed_e1 != seed_e0_a
+    dataset.set_pass_index(1)
+    seed_p1 = dataset._rng_seed_for(index=7, anchor_attempt=2)
+    assert seed_p1 != seed_e0_a
 
-    dataset.set_epoch(1)
-    seed_e1_repeat = dataset._rng_seed_for(index=7, anchor_attempt=2)
-    assert seed_e1 == seed_e1_repeat
+    dataset.set_pass_index(1)
+    seed_p1_repeat = dataset._rng_seed_for(index=7, anchor_attempt=2)
+    assert seed_p1 == seed_p1_repeat
 
 
 def _make_dummy_sample(anchor_id: str, slide_id: str):

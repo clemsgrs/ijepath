@@ -50,7 +50,7 @@ def initialize_wandb(
         init_kwargs.update({"id": resume_id, "resume": "must"})
 
     run = wb.init(**init_kwargs)
-    run.define_metric("epoch", summary="max")
+    run.define_metric("images_seen", summary="max")
     return run
 
 
@@ -77,12 +77,11 @@ def update_log_dict(
         log_dict[metric_name] = value
 
 
-def log_epoch_dict(log_dict: Mapping[str, Any], epoch: int) -> None:
+def log_images_seen_dict(log_dict: Mapping[str, Any], images_seen: int) -> None:
     wb = _require_wandb()
-    wb.log(dict(log_dict), step=int(epoch))
+    wb.log(dict(log_dict), step=int(images_seen))
 
 
 def finish_wandb() -> None:
     if wandb is not None and getattr(wandb, "run", None) is not None:
         wandb.finish()
-

@@ -76,10 +76,48 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 # Merged resolved config is saved automatically to:
 # outputs/<run-folder>/params-ijepa.yaml
 
-# Epoch semantics:
-# - data.samples_per_epoch=null  -> one full pass on anchor_catalog rows
-# - data.samples_per_epoch=<int> -> fixed virtual epoch length (e.g. smoke runs)
+# Image-budget semantics:
+# - optimization.total_images_budget controls total training length
+# - tuning/checkpoint events are triggered by images_seen thresholds
 ```
+
+## Diversity budget
+
+Training is image-budget driven, and data diversity is reported as anchor passes:
+- `anchor_count = len(anchor_catalog_csv)`
+- `anchor_passes_total = total_images_budget / anchor_count`
+- `coverage_first_pass = min(1, total_images_budget / anchor_count)`
+- `mean_anchor_reuse = max(0, total_images_budget / anchor_count - 1)`
+
+Heuristic interpretation:
+- `< 1`: partial anchor coverage
+- `1 - 5`: typical balance
+- `> 5`: high anchor reuse (consider adding anchors or reducing total image budget)
+
+Runtime logs emit these diagnostics at startup with warnings and suggested knobs:
+- increase anchor diversity: enlarge anchor catalog
+- increase within-anchor diversity: increase `data.targets_per_context`
+- rebalance compute: adjust `optimization.total_images_budget`
+
+## PathoROB tuning during pretraining (Camelyon, image-budget cadence)
+```bash
+DATA_ROOT=/path/to/your-dataset
+
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
+  --run-config configs/runs/pathorob_camelyon_image_budget.yaml \
+  data.slide_manifest_csv=${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
+  data.slide_metadata_index_jsonl=${DATA_ROOT}/indexes/slide_metadata_index.jsonl \
+  data.anchor_catalog_csv=${DATA_ROOT}/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv \
+  tuning.plugins[0].datasets.camelyon.manifest_csv=${DATA_ROOT}/pathorob/camelyon_manifest.csv
+```
+
+Checkpoint semantics:
+- Always keeps `<write_tag>-latest.pth.tar`
+- Also writes image-tagged snapshots at thresholds:
+  - `<write_tag>-img1000000.pth.tar`
+  - `<write_tag>-img2000000.pth.tar`
+- If robustness early stopping is enabled and improves, writes `best-robustness.pth.tar`
 
 ## Preview generation
 ```bash
