@@ -1,11 +1,11 @@
 profile_id: ctx1p0_tgt0p5_fov512um_k4  # Identifier embedded in generated anchor catalog rows.
 context_mpp: 1.0  # Requested context spacing (microns/pixel, lower resolution).
 target_mpp: 0.5  # Requested target spacing (microns/pixel, higher resolution).
-context_fov_um: 512.0  # Context field-of-view width in microns.
-target_fov_um: 128.0  # Target field-of-view width in microns.
+context_fov_um: 512  # Context field-of-view width in microns.
+target_fov_um: 128  # Target field-of-view width in microns.
 targets_per_context: 4  # Number of targets sampled per context.
 min_tissue_fraction: 0.2  # Minimum whole-context tissue fraction for anchor validity.
 anchor_stride_fraction: 0.5  # Anchor grid stride as fraction of context size (0.5 = overlapping anchors).
-target_margin_um: 16.0  # Minimum distance from context border for target centers (converted using context_mpp).
+target_margin_um: 16  # Minimum distance from context border for target centers (converted using context_mpp).
 spacing_tolerance: 0.05  # Relative tolerance for near-native spacing matching.
 seed: 0  # Seed for deterministic indexing/sampling where applicable.
