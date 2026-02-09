@@ -5,7 +5,16 @@ import torch
 
 
 class ContextTargetFootprintMaskCollator:
-    """Mask collator using target footprints as predictor masks and their complement as encoder masks."""
+    """Build predictor masks from target footprints and encoder masks from their complement.
+
+    Box-to-token rasterization uses floor/ceil bounds:
+    px0=floor(x0/patch), px1=ceil(x1/patch), similarly for y.
+    For a 128 px target with patch=16, token spans are:
+    - aligned on x and y: 8x8 = 64
+    - misaligned on one axis: 9x8 = 72
+    - misaligned on both axes: 9x9 = 81
+    Then predictor masks are truncated to a shared min_keep_pred for tensor stacking.
+    """
 
     def __init__(
         self,

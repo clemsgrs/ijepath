@@ -109,17 +109,31 @@ pytest -m integration tests/test_pipeline_integration.py
 ### Target Sampling Strategy: Aligned vs Non-Aligned
 Use `data.align_targets_to_patch_grid` to choose how target boxes are sampled in context coordinates.
 
-- `false` (non-aligned, default):
-  - Pros: higher spatial diversity; richer sub-patch offsets; better coverage of local morphology variation.
-  - Cons: target-to-token rasterization is quantized, so predictor footprints can have **excess tokens** (partially outside the ideal box) and, after collation/truncation, occasionally **missing tokens** vs the ideal per-target footprint.
+- Notation used below:
+  - `C`: continuous target content extent in context coordinates.
+  - `R`: raw tokenized footprint before collator truncation.
+  - `T`: post-collator predictor footprint (`T ⊆ R`).
 
-- `true` (patch-aligned):
-  - Pros: cleaner and more interpretable footprint geometry on the token grid; easier debugging/visualization; consistent box edges at patch boundaries.
-  - Cons: reduced spatial diversity due to quantized candidate positions; potentially less robustness to small spatial shifts.
+- Non-aligned (`false`, default):
+  - Preserves sub-patch offsets and increases spatial diversity.
+  - Floor/ceil rasterization can make `R` larger than `C`.
+  - After `min_keep_pred` truncation, `T` can drop part of `R`.
+  - Net effect can include both `C \ T` (target content not represented in predictor footprint) and `T \ C` (predictor footprint outside target content).
+  - Leakage clarification: context masking is built from pre-truncation `R` (typically `R ⊇ C`), not from `T`, so this is conservative over-masking (context sees less), not target exposure.
+  - Practical consequence: the core issue is supervision mismatch, not leakage; predictor summarizes tokens indexed by `T`, while teacher supervision comes from the full target crop embedding.
 
-Practical guidance:
-- Prefer `false` for representation learning quality (more diversity).
-- Prefer `true` for debugging, controlled ablations, and explanatory visualizations.
+![Non-aligned target path](assets/pathology/stagec_non_aligned_path.png)
+
+- Patch-aligned (`true`):
+  - Snaps boxes to patch boundaries, producing cleaner and more interpretable footprint geometry.
+  - For the standard fixed-size setup here (target size is patch-multiple), alignment makes `C`, `R`, and `T` coincide and removes `C/T` mismatch.
+  - Trades off some spatial diversity (fewer sub-patch offsets).
+
+![Patch-aligned target path](assets/pathology/stagec_aligned_path.png)
+
+- Practical guidance:
+  - Prefer `false` for representation diversity.
+  - Prefer `true` for debugging, controlled ablations, and maximum predictor-teacher geometric alignment.
 
 ## Upstream provenance
 Based on the official I-JEPA implementation and paper:
