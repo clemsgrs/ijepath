@@ -24,7 +24,7 @@ Standard SSL in pathology can overfit stain/scanner shortcuts. This project targ
 - `docs/pathology/config-reference.md`
 
 ## Sample curation pipeline
-<img src="assets/preview/ijepath_flow.gif" alt="TCGA-HC-8257 anchor A001 cross-resolution flow" width="920" />
+<img src="assets/ijepath_flow.gif" alt="TCGA-HC-8257 anchor A001 cross-resolution flow" width="920" />
 
 ## Dataset structure
 Use any dataset root; below is the expected structure and contracts:
@@ -122,14 +122,14 @@ Use `data.align_targets_to_patch_grid` to choose how target boxes are sampled in
   - Leakage clarification: context masking is built from pre-truncation `R` (typically `R ⊇ C`), not from `T`, so this is conservative over-masking (context sees less), not target exposure.
   - Practical consequence: the core issue is supervision mismatch, not leakage; predictor summarizes tokens indexed by `T`, while teacher supervision comes from the full target crop embedding.
 
-![Non-aligned target path](assets/pathology/stagec_non_aligned_path.png)
+![Non-aligned target path](assets/stagec_non_aligned_path.png)
 
 - Patch-aligned (`true`):
   - Snaps boxes to patch boundaries, producing cleaner and more interpretable footprint geometry.
   - For the standard fixed-size setup here (target size is patch-multiple), alignment makes `C`, `R`, and `T` coincide and removes `C/T` mismatch.
   - Trades off some spatial diversity (fewer sub-patch offsets).
 
-![Patch-aligned target path](assets/pathology/stagec_aligned_path.png)
+![Patch-aligned target path](assets/stagec_aligned_path.png)
 
 - Practical guidance:
   - Prefer `false` for representation diversity.
