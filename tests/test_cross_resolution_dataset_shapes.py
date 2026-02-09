@@ -42,8 +42,10 @@ def test_cross_resolution_dataset_shapes_and_determinism():
     )
 
     metadata = sample_a["sample_metadata"]
-    assert metadata["source_target_mpp"] <= metadata["output_target_mpp"]
-    assert metadata["output_target_mpp"] == metadata["requested_target_mpp"]
+    assert metadata["source_target_mpp"] <= metadata["effective_target_mpp"]
+    assert metadata["effective_target_mpp"] == metadata["requested_target_mpp"]
+    assert "output_context_mpp" not in metadata
+    assert "output_target_mpp" not in metadata
     assert metadata["source_context_mpp"] > 0.0
     if metadata["target_resolution_mode"] == "fallback_from_finer":
         assert (

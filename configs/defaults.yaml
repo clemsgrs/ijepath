@@ -34,7 +34,6 @@ data:
   high_anchor_pass_warning_threshold: 5.0  # Warn when anchors are expected to be reused heavily.
 
 meta:
-  copy_data: false
   load_checkpoint: false
   architecture: vit_small
   patch_size: 16  # ViT patch size used by encoder, predictor geometry, and mask tokenization.
@@ -59,12 +58,6 @@ optimization:
   warmup: 0.1  # Warmup fraction of total_steps (warmup_steps=int(warmup * total_steps)).
   weight_decay: 0.04
 
-logging:
-  folder: outputs/train
-  write_tag: jepa
-  step_log_every_iters: 0  # 0 => disable per-step terminal logs and rely on per-pass summaries.
-  checkpoint_every_images: 1000000  # Save numbered checkpoint every N images seen.
-
 tuning:
   enable: false
   seed: 0
@@ -76,9 +69,15 @@ tuning:
     enable: false
     patience_evals: 5  # Stop after this many non-improving tuning evaluations.
     min_evals: 3  # Minimum number of evaluations before stop condition is allowed.
-    stop_training: false
+    stop_training: false  # If true, terminate JEPA training once the early-stopping criterion is met.
     save_best_checkpoint: true
     best_checkpoint_name: best-robustness.pth.tar
+
+logging:
+  folder: outputs/train
+  write_tag: jepa
+  step_log_every_iters: 0  # 0 => disable per-step terminal logs and rely on per-pass summaries.
+  checkpoint_every_images: 1000000  # Save numbered checkpoint every N images seen.
 
 wandb:
   enable: false
