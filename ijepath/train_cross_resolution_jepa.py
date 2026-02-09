@@ -1,6 +1,7 @@
 import logging
 import math
 import os
+import sys
 import time
 from pathlib import Path
 from contextlib import nullcontext
@@ -86,6 +87,20 @@ def resolve_checkpoint_every_images(logging_cfg: dict) -> int:
     if interval <= 0:
         raise ValueError("logging.checkpoint_every_images must be > 0")
     return interval
+
+
+def resolve_uncaught_exception_exit_code() -> int:
+    _, exc, _ = sys.exc_info()
+    if exc is None:
+        return 0
+    if isinstance(exc, SystemExit):
+        code = exc.code
+        if code is None:
+            return 0
+        if isinstance(code, int):
+            return int(code)
+        return 1
+    return 1
 
 
 def resolve_total_images_budget(optimization_cfg: dict) -> int:
@@ -1095,7 +1110,7 @@ def main(
             logger.info("Training terminated early by robustness early stopping at images_seen=%d", images_seen)
     finally:
         if wandb_enabled:
-            finish_wandb()
+            finish_wandb(exit_code=resolve_uncaught_exception_exit_code())
 
 
 if __name__ == "__main__":

@@ -82,6 +82,9 @@ def log_images_seen_dict(log_dict: Mapping[str, Any], images_seen: int) -> None:
     wb.log(dict(log_dict), step=int(images_seen))
 
 
-def finish_wandb() -> None:
+def finish_wandb(exit_code: Optional[int] = None) -> None:
     if wandb is not None and getattr(wandb, "run", None) is not None:
-        wandb.finish()
+        if exit_code is None:
+            wandb.finish()
+        else:
+            wandb.finish(exit_code=int(exit_code))
