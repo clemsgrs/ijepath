@@ -59,15 +59,15 @@ def test_resolve_checkpoint_every_images_defaults_and_validates():
         pass
 
 
-def test_build_pass_train_results_uses_standardized_throughput_keys():
+def test_build_pass_train_results_uses_standardized_throughput_and_explicit_mask_avg_keys():
     from ijepath.train_cross_resolution_jepa import build_pass_train_results
 
     payload = build_pass_train_results(
         loss_avg=0.3,
         loss_min=0.2,
         loss_max=0.5,
-        mask_a=16.0,
-        mask_b=64.0,
+        context_keep_tokens_avg=16.0,
+        target_predict_tokens_avg=64.0,
         iter_time_ms=12.0,
         pass_time_s=8.0,
         images_seen=256,
@@ -81,8 +81,14 @@ def test_build_pass_train_results_uses_standardized_throughput_keys():
 
     assert payload["images_per_sec"] == 32.0
     assert payload["iterations_per_sec"] == 2.0
+    assert payload["context_keep_tokens_avg"] == 16.0
+    assert payload["target_predict_tokens_avg"] == 64.0
     assert "images_per_s" not in payload
     assert "iters_per_s" not in payload
+    assert "mask_a" not in payload
+    assert "mask_b" not in payload
+    assert "context_keep_tokens" not in payload
+    assert "target_predict_tokens" not in payload
 
 
 def test_train_step_csv_schema_is_standardized():
