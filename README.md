@@ -11,12 +11,20 @@ Standard SSL in pathology can overfit stain/scanner shortcuts. This project targ
 - Online context/target extraction with target-footprint non-leakage masking.
 - Smoke-trainable stage-1 pipeline and visualization QA.
 
+## Planned after v1
+- Add same-resolution JEPA batches (for example `20x -> 20x`) to improve nuclear-detail fidelity while keeping cross-resolution training.
+- Add variable absolute scales while keeping fixed ratio (for example `5->10`, `10->20`, `20->40` when available).
+- Add anti-confounder controls: stain/scanner augmentation, richer mask types, brightness/frequency normalization, and optional site-adversarial components.
+- Evaluate reverse-ratio auxiliary training (`high-res context -> low-res target`) only after leakage/confound controls are stable.
+- Run a controlled outside-context target ablation (`inside-only` vs `inside + near-outside ring`).
+- Add optional I-JEPA-style variable target geometry (per-target size and aspect ratio), first as an ablation against fixed-square baseline.
+
 ## Docs
 - `docs/pathology/README.md`
 - `docs/pathology/config-reference.md`
 
 ## Sample curation pipeline
-<img src="assets/preview/ijepath_flow.gif" alt="TCGA-HC-8257 anchor A001 cross-resolution flow" width="920" />
+<img src="assets/ijepath_flow.gif" alt="TCGA-HC-8257 anchor A001 cross-resolution flow" width="920" />
 
 ## Dataset structure
 Use any dataset root; below is the expected structure and contracts:
@@ -67,14 +75,6 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 
 # Merged resolved config is saved automatically to:
 # outputs/<run-folder>/params-ijepa.yaml
-# Training step CSV columns are standardized:
-# epoch, iteration, loss, context_keep_tokens, target_predict_tokens,
-# iteration_time_ms, learning_rate, weight_decay
-
-# Optional W&B logging (single log payload per epoch, x-axis=epoch):
-# ... wandb.enable=true wandb.project=<project> wandb.username=<entity>
-# Optional terminal/checkpoint logging controls:
-# ... logging.step_log_every_iters=0 logging.checkpoint_every_epochs=50
 
 # Epoch semantics:
 # - data.samples_per_epoch=null  -> one full pass on anchor_catalog rows
@@ -109,17 +109,31 @@ pytest -m integration tests/test_pipeline_integration.py
 ### Target Sampling Strategy: Aligned vs Non-Aligned
 Use `data.align_targets_to_patch_grid` to choose how target boxes are sampled in context coordinates.
 
-- `false` (non-aligned, default):
-  - Pros: higher spatial diversity; richer sub-patch offsets; better coverage of local morphology variation.
-  - Cons: target-to-token rasterization is quantized, so predictor footprints can have **excess tokens** (partially outside the ideal box) and, after collation/truncation, occasionally **missing tokens** vs the ideal per-target footprint.
+- Notation used below:
+  - `C`: continuous target content extent in context coordinates.
+  - `R`: raw tokenized footprint before collator truncation.
+  - `T`: post-collator predictor footprint (`T ⊆ R`).
 
-- `true` (patch-aligned):
-  - Pros: cleaner and more interpretable footprint geometry on the token grid; easier debugging/visualization; consistent box edges at patch boundaries.
-  - Cons: reduced spatial diversity due to quantized candidate positions; potentially less robustness to small spatial shifts.
+- Non-aligned (`false`, default):
+  - Preserves sub-patch offsets and increases spatial diversity.
+  - Floor/ceil rasterization can make `R` larger than `C`.
+  - After `min_keep_pred` truncation, `T` can drop part of `R`.
+  - Net effect can include both `C \ T` (target content not represented in predictor footprint) and `T \ C` (predictor footprint outside target content).
+  - Leakage clarification: context masking is built from pre-truncation `R` (typically `R ⊇ C`), not from `T`, so this is conservative over-masking (context sees less), not target exposure.
+  - Practical consequence: the core issue is supervision mismatch, not leakage; predictor summarizes tokens indexed by `T`, while teacher supervision comes from the full target crop embedding.
 
-Practical guidance:
-- Prefer `false` for representation learning quality (more diversity).
-- Prefer `true` for debugging, controlled ablations, and explanatory visualizations.
+![Non-aligned target path](assets/non_aligned_path.png)
+
+- Patch-aligned (`true`):
+  - Snaps boxes to patch boundaries, producing cleaner and more interpretable footprint geometry.
+  - For the standard fixed-size setup here (target size is patch-multiple), alignment makes `C`, `R`, and `T` coincide and removes `C/T` mismatch.
+  - Trades off some spatial diversity (fewer sub-patch offsets).
+
+![Patch-aligned target path](assets/aligned_path.png)
+
+- Practical guidance:
+  - Prefer `false` for representation diversity.
+  - Prefer `true` for debugging, controlled ablations, and maximum predictor-teacher geometric alignment.
 
 ## Upstream provenance
 Based on the official I-JEPA implementation and paper:
