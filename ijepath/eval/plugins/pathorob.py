@@ -371,23 +371,10 @@ class PathoROBPlugin(BenchmarkPlugin):
             else:
                 df.to_csv(roll_csv, index=False)
 
-        selection_value = None
-        selection_mode = None
-        if bool(self.cfg.get("use_for_early_stopping", False)):
-            metric_key = str(self.cfg.get("early_stopping_metric", "")).strip()
-            selection_mode = str(self.cfg.get("early_stopping_mode", "max"))
-            if metric_key:
-                selection_value = all_logs.get(metric_key)
-                if selection_value is None:
-                    raise ValueError(
-                        f"[PathoROB] early_stopping_metric='{metric_key}' was not emitted in this eval event. "
-                        f"Available metrics: {sorted(all_logs.keys())}"
-                    )
-
         return PluginResult(
             name=self.name,
             payload={"rows": all_rows},
             log_metrics=all_logs,
-            selection_metric_value=(None if selection_value is None else float(selection_value)),
-            selection_mode=selection_mode,
+            selection_metric_value=None,
+            selection_mode=None,
         )

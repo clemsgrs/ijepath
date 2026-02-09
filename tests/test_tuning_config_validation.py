@@ -71,7 +71,7 @@ def test_checkpoint_every_epochs_is_rejected(tmp_path: Path):
         load_training_config(config_file=str(cfg_path))
 
 
-def test_tuning_early_stopping_requires_selected_plugin(tmp_path: Path):
+def test_tuning_early_stopping_requires_selection_target(tmp_path: Path):
     cfg_path = tmp_path / "cfg.yaml"
     cfg = _base_cfg()
     cfg["tuning"] = {
@@ -80,7 +80,6 @@ def test_tuning_early_stopping_requires_selected_plugin(tmp_path: Path):
             {
                 "type": "pathorob",
                 "enable": True,
-                "use_for_early_stopping": False,
                 "datasets": {"camelyon": {"enable": False}},
             }
         ],
@@ -95,28 +94,77 @@ def test_tuning_early_stopping_requires_selected_plugin(tmp_path: Path):
     }
     _write_yaml(cfg_path, cfg)
 
-    with pytest.raises(ValueError, match="use_for_early_stopping"):
+    with pytest.raises(ValueError, match="tuning.early_stopping.selection"):
         load_training_config(config_file=str(cfg_path))
 
 
-def test_tuning_rejects_multiple_selected_plugins(tmp_path: Path):
+def test_tuning_early_stopping_selection_requires_enabled_plugin(tmp_path: Path):
     cfg_path = tmp_path / "cfg.yaml"
     cfg = _base_cfg()
     cfg["tuning"] = {
         "enable": True,
         "plugins": [
-            {"type": "pathorob", "enable": True, "use_for_early_stopping": True, "datasets": {"camelyon": {"enable": False}}},
-            {"type": "pathorob", "enable": True, "use_for_early_stopping": True, "datasets": {"camelyon": {"enable": False}}},
+            {"type": "pathorob", "enable": True, "datasets": {"camelyon": {"enable": False}}},
         ],
-        "early_stopping": {"enable": True},
+        "early_stopping": {
+            "enable": True,
+            "selection": {"plugin": "unknown", "dataset": "camelyon", "metric": "ri"},
+        },
     }
     _write_yaml(cfg_path, cfg)
 
-    with pytest.raises(ValueError, match="At most one enabled plugin"):
+    with pytest.raises(ValueError, match="must match an enabled plugin type"):
         load_training_config(config_file=str(cfg_path))
 
 
-def test_selected_early_stopping_plugin_requires_metric_key(tmp_path: Path):
+def test_tuning_early_stopping_selection_requires_enabled_dataset(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg = _base_cfg()
+    cfg["tuning"] = {
+        "enable": True,
+        "plugins": [
+            {
+                "type": "pathorob",
+                "enable": True,
+                "datasets": {"camelyon": {"enable": False}},
+            }
+        ],
+        "early_stopping": {
+            "enable": True,
+            "selection": {"plugin": "pathorob", "dataset": "camelyon", "metric": "ri"},
+        },
+    }
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="must reference an enabled pathorob dataset entry"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_tuning_early_stopping_selection_rejects_unknown_metric(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg = _base_cfg()
+    cfg["tuning"] = {
+        "enable": True,
+        "plugins": [
+            {
+                "type": "pathorob",
+                "enable": True,
+                "apd": {"mode": "custom", "correlation_levels": [0.0, 1.0]},
+                "datasets": {"camelyon": {"enable": True}},
+            }
+        ],
+        "early_stopping": {
+            "enable": True,
+            "selection": {"plugin": "pathorob", "dataset": "camelyon", "metric": "invalid_metric"},
+        },
+    }
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="Unsupported tuning.early_stopping.selection.metric"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_tuning_rejects_legacy_plugin_level_early_stopping_keys(tmp_path: Path):
     cfg_path = tmp_path / "cfg.yaml"
     cfg = _base_cfg()
     cfg["tuning"] = {
@@ -129,32 +177,9 @@ def test_selected_early_stopping_plugin_requires_metric_key(tmp_path: Path):
                 "datasets": {"camelyon": {"enable": False}},
             }
         ],
-        "early_stopping": {"enable": True},
+        "early_stopping": {"enable": False},
     }
     _write_yaml(cfg_path, cfg)
 
-    with pytest.raises(ValueError, match="early_stopping_metric"):
-        load_training_config(config_file=str(cfg_path))
-
-
-def test_selected_early_stopping_plugin_rejects_invalid_mode(tmp_path: Path):
-    cfg_path = tmp_path / "cfg.yaml"
-    cfg = _base_cfg()
-    cfg["tuning"] = {
-        "enable": True,
-        "plugins": [
-            {
-                "type": "pathorob",
-                "enable": True,
-                "use_for_early_stopping": True,
-                "early_stopping_metric": "camelyon/apd_avg",
-                "early_stopping_mode": "upward",
-                "datasets": {"camelyon": {"enable": False}},
-            }
-        ],
-        "early_stopping": {"enable": True},
-    }
-    _write_yaml(cfg_path, cfg)
-
-    with pytest.raises(ValueError, match="early_stopping_mode"):
+    with pytest.raises(ValueError, match="Unsupported plugin-level early stopping keys"):
         load_training_config(config_file=str(cfg_path))

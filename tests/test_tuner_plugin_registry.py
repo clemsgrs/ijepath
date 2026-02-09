@@ -35,11 +35,14 @@ def test_disabled_plugins_are_skipped(tmp_path: Path):
 def test_selected_plugin_name_is_resolved(tmp_path: Path):
     cfg = {
         "enable": True,
+        "early_stopping": {
+            "enable": True,
+            "selection": {"plugin": "pathorob", "dataset": "camelyon", "metric": "ri"},
+        },
         "plugins": [
             {
                 "type": "pathorob",
                 "enable": True,
-                "use_for_early_stopping": True,
                 "datasets": {"camelyon": {"enable": False}},
             }
         ],
@@ -51,11 +54,14 @@ def test_selected_plugin_name_is_resolved(tmp_path: Path):
 def test_selected_plugin_must_emit_selection_metric_value(tmp_path: Path):
     cfg = {
         "enable": True,
+        "early_stopping": {
+            "enable": True,
+            "selection": {"plugin": "pathorob", "dataset": "camelyon", "metric": "ri"},
+        },
         "plugins": [
             {
                 "type": "pathorob",
                 "enable": True,
-                "use_for_early_stopping": True,
                 "datasets": {"camelyon": {"enable": False}},
             }
         ],
@@ -78,7 +84,7 @@ def test_selected_plugin_must_emit_selection_metric_value(tmp_path: Path):
             )
 
     tuner.plugins = [_DummyPlugin()]
-    with pytest.raises(ValueError, match="did not provide selection_metric_value"):
+    with pytest.raises(ValueError, match="Configured early-stopping target was not emitted"):
         tuner.tune(teacher=object(), eval_index=0, images_seen=0)
 
 

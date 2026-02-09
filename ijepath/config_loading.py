@@ -3,6 +3,16 @@ from typing import Any
 
 from omegaconf import OmegaConf
 
+_EARLY_STOPPING_METRIC_MODES: dict[str, dict[str, str]] = {
+    "pathorob": {
+        "ri": "max",
+        "clustering_score": "max",
+        "apd_id": "min",
+        "apd_ood": "min",
+        "apd_avg": "min",
+    }
+}
+
 
 def load_training_config(
     *,
@@ -242,6 +252,15 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         ptype = str(plugin.get("type", "")).strip().lower()
         if ptype not in valid_plugin_types:
             raise ValueError(f"Unknown tuning plugin type: {ptype}")
+        legacy_early_stopping_keys = [
+            k for k in ("use_for_early_stopping", "early_stopping_metric", "early_stopping_mode") if k in plugin
+        ]
+        if legacy_early_stopping_keys:
+            raise ValueError(
+                "Unsupported plugin-level early stopping keys in tuning.plugins entry: "
+                f"{legacy_early_stopping_keys}. "
+                "Use tuning.early_stopping.selection.{plugin,dataset,metric} instead."
+            )
         if ptype == "pathorob":
             apd_cfg = dict(plugin.get("apd", {}) or {})
             mode = str(apd_cfg.get("mode", "paper"))
@@ -264,23 +283,41 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
     if not bool(early_cfg.get("enable", False)):
         return
 
-    selected = [p for p in enabled_plugins if bool(p.get("use_for_early_stopping", False))]
-    if len(selected) == 0:
-        raise ValueError(
-            "tuning.early_stopping.enable=true requires one enabled plugin with use_for_early_stopping=true"
-        )
-    if len(selected) > 1:
-        raise ValueError("At most one enabled plugin may set use_for_early_stopping=true")
+    selection_cfg = dict(early_cfg.get("selection", {}) or {})
+    plugin_name = str(selection_cfg.get("plugin", "")).strip().lower()
+    dataset_name = str(selection_cfg.get("dataset", "")).strip()
+    metric_name = str(selection_cfg.get("metric", "")).strip()
 
-    selected_plugin = dict(selected[0])
-    metric_key = str(selected_plugin.get("early_stopping_metric", "")).strip()
-    if not metric_key:
+    if not plugin_name or not dataset_name or not metric_name:
         raise ValueError(
-            "Selected early-stopping plugin must define a non-empty early_stopping_metric"
+            "tuning.early_stopping.enable=true requires tuning.early_stopping.selection "
+            "with non-empty plugin, dataset, and metric"
         )
 
-    mode = str(selected_plugin.get("early_stopping_mode", "max")).strip().lower()
-    if mode not in {"min", "max"}:
+    matching_plugins = [p for p in enabled_plugins if str(p.get("type", "")).strip().lower() == plugin_name]
+    if len(matching_plugins) == 0:
         raise ValueError(
-            f"Selected early-stopping plugin has invalid early_stopping_mode: {mode}"
+            f"tuning.early_stopping.selection.plugin='{plugin_name}' must match an enabled plugin type"
+        )
+    if len(matching_plugins) > 1:
+        raise ValueError(
+            f"tuning.early_stopping.selection.plugin='{plugin_name}' is ambiguous: "
+            "multiple enabled plugin entries share this type"
+        )
+
+    selected_plugin = dict(matching_plugins[0])
+    if plugin_name == "pathorob":
+        datasets_cfg = dict(selected_plugin.get("datasets", {}) or {})
+        dataset_cfg = dict(datasets_cfg.get(dataset_name, {}) or {})
+        if not bool(dataset_cfg.get("enable", False)):
+            raise ValueError(
+                f"tuning.early_stopping.selection.dataset='{dataset_name}' must reference an enabled "
+                f"{plugin_name} dataset entry"
+            )
+
+    metric_modes = _EARLY_STOPPING_METRIC_MODES.get(plugin_name, {})
+    if metric_name not in metric_modes:
+        raise ValueError(
+            f"Unsupported tuning.early_stopping.selection.metric='{metric_name}' for plugin='{plugin_name}'. "
+            f"Allowed metrics: {sorted(metric_modes.keys())}"
         )

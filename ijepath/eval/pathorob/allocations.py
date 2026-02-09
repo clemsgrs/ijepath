@@ -23,25 +23,31 @@ CAMELYON_ALLOCATIONS: Dict[float, np.ndarray] = {
 
 CAMELYON_V_LEVELS = [0.00, 0.14, 0.29, 0.43, 0.57, 0.71, 0.86, 1.00]
 
+_CAMELYON_DATASET_ALIASES = {"camelyon", "camelyon16", "camelyon17"}
+
+
+def _is_camelyon_dataset(dataset: str) -> bool:
+    return str(dataset).lower() in _CAMELYON_DATASET_ALIASES
+
 
 def get_paper_allocations(dataset: str) -> Dict[float, np.ndarray]:
-    dataset = str(dataset).lower()
-    if dataset in {"camelyon", "camelyon16", "camelyon17"}:
+    if _is_camelyon_dataset(dataset):
         return CAMELYON_ALLOCATIONS
+    dataset = str(dataset).lower()
     raise ValueError(f"Unknown dataset: {dataset}. Available: camelyon")
 
 
 def get_paper_v_levels(dataset: str) -> List[float]:
-    dataset = str(dataset).lower()
-    if dataset in {"camelyon", "camelyon16", "camelyon17"}:
+    if _is_camelyon_dataset(dataset):
         return CAMELYON_V_LEVELS.copy()
+    dataset = str(dataset).lower()
     raise ValueError(f"Unknown dataset: {dataset}. Available: camelyon")
 
 
 def get_paper_metadata(dataset: str) -> Tuple[List[str], List[str], List[str]]:
-    dataset = str(dataset).lower()
-    if dataset in {"camelyon", "camelyon16", "camelyon17"}:
+    if _is_camelyon_dataset(dataset):
         return CAMELYON_CLASSES.copy(), CAMELYON_ID_CENTERS.copy(), CAMELYON_OOD_CENTERS.copy()
+    dataset = str(dataset).lower()
     raise ValueError(f"Unknown dataset: {dataset}. Available: camelyon")
 
 
