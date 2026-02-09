@@ -732,12 +732,7 @@ def main(
         if bool(early_stop_cfg.get("enable", False)):
             from ijepath.eval.early_stopping import RobustnessEarlyStopper
 
-            selected_plugin_mode = "max"
-            for plugin_cfg in list(tuning_cfg.get("plugins", []) or []):
-                plugin_cfg = dict(plugin_cfg or {})
-                if bool(plugin_cfg.get("enable", True)) and bool(plugin_cfg.get("use_for_early_stopping", False)):
-                    selected_plugin_mode = str(plugin_cfg.get("early_stopping_mode", "max"))
-                    break
+            selected_plugin_mode = str(tuner.get_selection_mode() or "max")
 
             early_stopper = RobustnessEarlyStopper(
                 mode=selected_plugin_mode,

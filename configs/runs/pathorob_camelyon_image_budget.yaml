@@ -35,9 +35,6 @@ tuning:
   plugins:
     - type: pathorob
       enable: true
-      use_for_early_stopping: true
-      early_stopping_metric: camelyon/apd_avg
-      early_stopping_mode: max
       batch_size_per_gpu: ${data.batch_size_per_gpu}
       num_workers: ${data.num_workers}
       transforms:
@@ -65,6 +62,10 @@ tuning:
         k_max: 10
   early_stopping:
     enable: true
+    selection:
+      plugin: pathorob
+      dataset: camelyon
+      metric: apd_avg
     patience_evals: 5
     min_evals: 3
     stop_training: false  # If true, terminate JEPA training once the early-stopping criterion is met.

@@ -10,6 +10,16 @@ from .plugins import BenchmarkPlugin, PathoROBPlugin
 
 logger = logging.getLogger("ijepath")
 
+_EARLY_STOPPING_METRIC_MODES: dict[str, dict[str, str]] = {
+    "pathorob": {
+        "ri": "max",
+        "clustering_score": "max",
+        "apd_id": "min",
+        "apd_ood": "min",
+        "apd_avg": "min",
+    }
+}
+
 
 class Tuner:
     """Orchestrator for robustness/downstream tuning plugins."""
@@ -26,13 +36,13 @@ class Tuner:
         self.plugins: list[BenchmarkPlugin] = []
         self.primary_plugin_name: str | None = None
         self._register_plugins()
+        self.selection_cfg = self._resolve_selection_cfg()
 
         for plugin in self.plugins:
             plugin.bind_runtime(self.output_dir)
 
     def _register_plugins(self) -> None:
         plugin_cfgs = list(self.cfg.get("plugins", []))
-        selected_primary = []
 
         for raw in plugin_cfgs:
             p = dict(raw or {})
@@ -42,17 +52,27 @@ class Tuner:
             if ptype == "pathorob":
                 plugin = PathoROBPlugin(p, self.device, output_dir=self.output_dir)
                 self.plugins.append(plugin)
-                if bool(p.get("use_for_early_stopping", False)):
-                    selected_primary.append(plugin.name)
             else:
                 raise ValueError(f"Unknown tuning plugin type: {ptype}")
 
-        if len(selected_primary) > 1:
-            raise ValueError(
-                "At most one enabled plugin may set use_for_early_stopping=true"
-            )
-        if selected_primary:
-            self.primary_plugin_name = selected_primary[0]
+    def _resolve_selection_cfg(self) -> dict | None:
+        early_cfg = dict(self.cfg.get("early_stopping", {}) or {})
+        if not bool(early_cfg.get("enable", False)):
+            return None
+
+        selection = dict(early_cfg.get("selection", {}) or {})
+        plugin = str(selection.get("plugin", "")).strip().lower()
+        dataset = str(selection.get("dataset", "")).strip()
+        metric = str(selection.get("metric", "")).strip()
+        mode = _EARLY_STOPPING_METRIC_MODES[plugin][metric]
+        self.primary_plugin_name = plugin
+        return {
+            "plugin": plugin,
+            "dataset": dataset,
+            "metric": metric,
+            "mode": mode,
+            "log_key": f"{plugin}/{dataset}/{metric}",
+        }
 
     @torch.no_grad()
     def tune(self, teacher, eval_index: int, images_seen: int) -> dict:
@@ -72,17 +92,20 @@ class Tuner:
             for key, value in result.log_metrics.items():
                 out["log_metrics"][f"{plugin.name}/{key}"] = float(value)
 
-            if self.primary_plugin_name == plugin.name:
-                if result.selection_metric_value is None:
-                    raise ValueError(
-                        f"Primary plugin '{plugin.name}' did not provide selection_metric_value "
-                        "for this evaluation event."
-                    )
-                out["selection"] = {
-                    "plugin": plugin.name,
-                    "metric_value": result.selection_metric_value,
-                    "mode": result.selection_mode,
-                }
+        if self.selection_cfg is not None:
+            value = out["log_metrics"].get(self.selection_cfg["log_key"])
+            if value is None:
+                raise ValueError(
+                    "Configured early-stopping target was not emitted in this evaluation event: "
+                    f"{self.selection_cfg['log_key']}. Available metrics: {sorted(out['log_metrics'].keys())}"
+                )
+            out["selection"] = {
+                "plugin": self.selection_cfg["plugin"],
+                "dataset": self.selection_cfg["dataset"],
+                "metric": self.selection_cfg["metric"],
+                "metric_value": float(value),
+                "mode": self.selection_cfg["mode"],
+            }
 
         self._persist_unified_metrics(
             results=out,
@@ -96,6 +119,11 @@ class Tuner:
 
     def get_selection(self, results: dict) -> dict | None:
         return results.get("selection")
+
+    def get_selection_mode(self) -> str | None:
+        if self.selection_cfg is None:
+            return None
+        return str(self.selection_cfg["mode"])
 
     def _persist_unified_metrics(self, results: dict, eval_index: int, images_seen: int) -> None:
         rows = []

@@ -67,6 +67,10 @@ tuning:
   plugins: []
   early_stopping:
     enable: false
+    selection:
+      plugin: null
+      dataset: null
+      metric: null
     patience_evals: 5  # Stop after this many non-improving tuning evaluations.
     min_evals: 3  # Minimum number of evaluations before stop condition is allowed.
     stop_training: false  # If true, terminate JEPA training once the early-stopping criterion is met.
