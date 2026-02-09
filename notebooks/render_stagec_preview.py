@@ -20,12 +20,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 NB_PATH = Path(
     os.environ.get(
         "STAGEC_NOTEBOOK",
-        str(REPO_ROOT / "output/jupyter-notebook/test-fixture-cross-resolution-pipeline.ipynb"),
+        str(REPO_ROOT / "notebooks/test-fixture-cross-resolution-pipeline.ipynb"),
     )
 )
-OUT_ROOT = Path(os.environ.get("STAGEC_OUT_ROOT", "/private/tmp/stagec-preview"))
+OUT_ROOT = Path(os.environ.get("STAGEC_OUT_ROOT", "output/stagec-preview"))
 OUT_DIR_OVERRIDE = os.environ.get("STAGEC_OUT_DIR")
-FIG_PREFIX = os.environ.get("STAGEC_PREFIX", "stagec_fig")
 LAST_CELL = int(os.environ.get("STAGEC_LAST_CELL", "30"))
 
 if OUT_DIR_OVERRIDE:
@@ -44,7 +43,7 @@ def save_all_open_figures():
     for n in list(plt.get_fignums()):
         fig = plt.figure(n)
         counter += 1
-        out = OUT_DIR / f"{FIG_PREFIX}_{counter:02d}.png"
+        out = OUT_DIR / f"{counter:02d}.png"
         fig.savefig(out, dpi=180, bbox_inches="tight")
     plt.close("all")
 
