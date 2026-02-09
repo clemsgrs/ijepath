@@ -46,31 +46,32 @@ def test_should_log_iteration_respects_frequency_and_anomalies():
     assert should_log_iteration(itr=3, step_log_every_iters=0, loss=float("inf")) is True
 
 
-def test_resolve_checkpoint_every_epochs_defaults_and_validates():
-    from ijepath.train_cross_resolution_jepa import resolve_checkpoint_every_epochs
+def test_resolve_checkpoint_every_images_defaults_and_validates():
+    from ijepath.train_cross_resolution_jepa import resolve_checkpoint_every_images
 
-    assert resolve_checkpoint_every_epochs({}) == 50
-    assert resolve_checkpoint_every_epochs({"checkpoint_every_epochs": 3}) == 3
+    assert resolve_checkpoint_every_images({}) == 1_000_000
+    assert resolve_checkpoint_every_images({"checkpoint_every_images": 3}) == 3
 
     try:
-        resolve_checkpoint_every_epochs({"checkpoint_every_epochs": 0})
+        resolve_checkpoint_every_images({"checkpoint_every_images": 0})
         raise AssertionError("Expected ValueError for non-positive checkpoint frequency")
     except ValueError:
         pass
 
 
-def test_build_epoch_train_results_uses_standardized_throughput_keys():
-    from ijepath.train_cross_resolution_jepa import build_epoch_train_results
+def test_build_pass_train_results_uses_standardized_throughput_keys():
+    from ijepath.train_cross_resolution_jepa import build_pass_train_results
 
-    payload = build_epoch_train_results(
+    payload = build_pass_train_results(
         loss_avg=0.3,
         loss_min=0.2,
         loss_max=0.5,
         mask_a=16.0,
         mask_b=64.0,
         iter_time_ms=12.0,
-        epoch_time_s=8.0,
+        pass_time_s=8.0,
         images_seen=256,
+        anchor_passes_seen=1.2,
         images_per_sec=32.0,
         iterations_per_sec=2.0,
         lr=1e-4,
@@ -91,7 +92,7 @@ def test_train_step_csv_schema_is_standardized():
     headers = [header for _, header in columns]
 
     assert headers == [
-        "epoch",
+        "pass_index",
         "iteration",
         "loss",
         "context_keep_tokens",
@@ -106,7 +107,7 @@ def test_build_step_log_line_uses_standardized_labels():
     from ijepath.train_cross_resolution_jepa import build_step_log_line
 
     line = build_step_log_line(
-        epoch=2,
+        pass_index=2,
         iteration=12,
         loss_avg=0.3456,
         context_keep_tokens=18.0,
@@ -117,7 +118,7 @@ def test_build_step_log_line_uses_standardized_labels():
         iteration_time_ms=11.2,
     )
 
-    assert line.startswith("epoch=2 iteration=12")
+    assert line.startswith("pass_index=2 iteration=12")
     assert "loss_avg=0.346" in line
     assert "context_keep_tokens=18.0" in line
     assert "target_predict_tokens=64.0" in line
@@ -132,7 +133,7 @@ def test_build_grad_stats_log_line_uses_standardized_labels():
     from ijepath.train_cross_resolution_jepa import build_grad_stats_log_line
 
     line = build_grad_stats_log_line(
-        epoch=3,
+        pass_index=3,
         iteration=7,
         first_layer_grad_norm=1.23e-2,
         last_layer_grad_norm=4.56e-2,
@@ -140,7 +141,7 @@ def test_build_grad_stats_log_line_uses_standardized_labels():
         grad_max=9.99e-1,
     )
 
-    assert line.startswith("epoch=3 iteration=7")
+    assert line.startswith("pass_index=3 iteration=7")
     assert "first_layer_grad_norm=1.23e-02" in line
     assert "last_layer_grad_norm=4.56e-02" in line
     assert "grad_norm_min=7.89e-04" in line
@@ -171,14 +172,35 @@ def test_init_opt_does_not_construct_grad_scaler_without_cuda(monkeypatch):
     _optimizer, scaler, _scheduler, _wd_scheduler = helper.init_opt(
         encoder=encoder,
         predictor=predictor,
-        iterations_per_epoch=1,
+        total_steps=10,
         start_lr=1e-5,
         ref_lr=1e-4,
         warmup=0.1,
-        num_epochs=1,
         use_bfloat16=True,
     )
     assert scaler is None
+
+
+def test_init_opt_uses_total_steps_for_schedule_horizon():
+    from ijepath import helper
+
+    encoder = torch.nn.Linear(4, 4)
+    predictor = torch.nn.Linear(4, 4)
+    _optimizer, _scaler, scheduler, wd_scheduler = helper.init_opt(
+        encoder=encoder,
+        predictor=predictor,
+        total_steps=100,
+        start_lr=1e-5,
+        ref_lr=1e-4,
+        warmup=0.1,
+        ipe_scale=1.25,
+        use_bfloat16=False,
+    )
+
+    assert scheduler.warmup_steps == 10
+    # WarmupCosineSchedule stores post-warmup span.
+    assert scheduler.T_max == 115
+    assert wd_scheduler.T_max == 125
 
 
 def test_launch_worker_processes_waits_for_all_children(monkeypatch):

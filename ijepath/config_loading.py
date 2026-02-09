@@ -173,6 +173,15 @@ def _normalize_batch_size_keys(cfg: dict[str, Any]) -> None:
 
 
 def _validate_training_config(cfg: dict[str, Any]) -> None:
+    if "samples_per_chunk" in cfg.get("data", {}):
+        raise ValueError("Unsupported config value: data.samples_per_chunk")
+    if "samples_per_epoch" in cfg.get("data", {}):
+        raise ValueError("Unsupported config value: data.samples_per_epoch")
+    if "epochs" in cfg.get("optimization", {}):
+        raise ValueError("Unsupported config value: optimization.epochs")
+    if "checkpoint_every_epochs" in cfg.get("logging", {}):
+        raise ValueError("Unsupported config value: logging.checkpoint_every_epochs")
+
     required_paths = (
         ("data", "slide_manifest_csv"),
         ("data", "slide_metadata_index_jsonl"),
@@ -206,6 +215,28 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
     if int(batch_size_per_gpu) <= 0:
         raise ValueError("data.batch_size_per_gpu must be > 0")
 
+    total_images_budget = cfg.get("optimization", {}).get("total_images_budget")
+    if total_images_budget is None:
+        raise ValueError("Missing required config value: optimization.total_images_budget")
+    if int(total_images_budget) <= 0:
+        raise ValueError("optimization.total_images_budget must be > 0")
+
+    low_anchor_pass_warning_threshold = float(
+        cfg.get("data", {}).get("low_anchor_pass_warning_threshold", 1.0)
+    )
+    high_anchor_pass_warning_threshold = float(
+        cfg.get("data", {}).get("high_anchor_pass_warning_threshold", 5.0)
+    )
+    if low_anchor_pass_warning_threshold <= 0:
+        raise ValueError("data.low_anchor_pass_warning_threshold must be > 0")
+    if high_anchor_pass_warning_threshold <= 0:
+        raise ValueError("data.high_anchor_pass_warning_threshold must be > 0")
+    if high_anchor_pass_warning_threshold <= low_anchor_pass_warning_threshold:
+        raise ValueError(
+            "data.high_anchor_pass_warning_threshold must be > "
+            "data.low_anchor_pass_warning_threshold"
+        )
+
     targets_per_context = int(cfg["data"]["targets_per_context"])
     mask_cfg = cfg.setdefault("mask", {})
     num_pred_masks = mask_cfg.get("num_pred_masks")
@@ -215,4 +246,59 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         raise ValueError(
             "mask.num_pred_masks must match data.targets_per_context "
             f"(got {num_pred_masks} vs {targets_per_context})"
+        )
+
+    tuning_cfg = dict(cfg.get("tuning", {}) or {})
+    if not bool(tuning_cfg.get("enable", False)):
+        return
+
+    plugins = list(tuning_cfg.get("plugins", []) or [])
+    enabled_plugins = [dict(p) for p in plugins if bool(dict(p).get("enable", True))]
+
+    valid_plugin_types = {"pathorob"}
+    for plugin in enabled_plugins:
+        ptype = str(plugin.get("type", "")).strip().lower()
+        if ptype not in valid_plugin_types:
+            raise ValueError(f"Unknown tuning plugin type: {ptype}")
+        if ptype == "pathorob":
+            apd_cfg = dict(plugin.get("apd", {}) or {})
+            mode = str(apd_cfg.get("mode", "paper"))
+            if mode == "paper":
+                datasets_cfg = dict(plugin.get("datasets", {}) or {})
+                camelyon_cfg = dict(datasets_cfg.get("camelyon", {}) or {})
+                if bool(camelyon_cfg.get("enable", False)):
+                    id_centers = sorted(list(camelyon_cfg.get("id_centers", [])))
+                    ood_centers = sorted(list(camelyon_cfg.get("ood_centers", [])))
+                    if id_centers != ["RUMC", "UMCU"]:
+                        raise ValueError(
+                            "PathoROB paper mode requires camelyon id_centers=['RUMC', 'UMCU']"
+                        )
+                    if ood_centers != ["CWZ", "LPON", "RST"]:
+                        raise ValueError(
+                            "PathoROB paper mode requires camelyon ood_centers=['CWZ', 'RST', 'LPON']"
+                        )
+
+    early_cfg = dict(tuning_cfg.get("early_stopping", {}) or {})
+    if not bool(early_cfg.get("enable", False)):
+        return
+
+    selected = [p for p in enabled_plugins if bool(p.get("use_for_early_stopping", False))]
+    if len(selected) == 0:
+        raise ValueError(
+            "tuning.early_stopping.enable=true requires one enabled plugin with use_for_early_stopping=true"
+        )
+    if len(selected) > 1:
+        raise ValueError("At most one enabled plugin may set use_for_early_stopping=true")
+
+    selected_plugin = dict(selected[0])
+    metric_key = str(selected_plugin.get("early_stopping_metric", "")).strip()
+    if not metric_key:
+        raise ValueError(
+            "Selected early-stopping plugin must define a non-empty early_stopping_metric"
+        )
+
+    mode = str(selected_plugin.get("early_stopping_mode", "max")).strip().lower()
+    if mode not in {"min", "max"}:
+        raise ValueError(
+            f"Selected early-stopping plugin has invalid early_stopping_mode: {mode}"
         )

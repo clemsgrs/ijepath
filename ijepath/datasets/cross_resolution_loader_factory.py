@@ -8,6 +8,40 @@ from ijepath.datasets.cross_resolution_wsi_dataset import (
 from ijepath.masks.context_target_footprint_mask_collator import ContextTargetFootprintMaskCollator
 
 
+def validate_dataset_collator_size_alignment(
+    dataset: CrossResolutionWSIDataset,
+    context_input_size_px: int,
+    target_input_size_px: int,
+    patch_size: int,
+) -> None:
+    dataset_context_px = int(dataset.context_size_requested_px)
+    dataset_target_px = int(dataset.target_size_requested_px)
+    context_input_px = int(context_input_size_px)
+    target_input_px = int(target_input_size_px)
+    patch = int(patch_size)
+
+    if dataset_context_px != context_input_px:
+        raise ValueError(
+            "Context input size drift: "
+            f"dataset={dataset_context_px} collator={context_input_px}"
+        )
+    if dataset_target_px != target_input_px:
+        raise ValueError(
+            "Target input size drift: "
+            f"dataset={dataset_target_px} encoder={target_input_px}"
+        )
+    if context_input_px % patch != 0:
+        raise ValueError(
+            "Context input size must be divisible by patch size: "
+            f"context={context_input_px} patch={patch}"
+        )
+    if target_input_px % patch != 0:
+        raise ValueError(
+            "Target input size must be divisible by patch size: "
+            f"target={target_input_px} patch={patch}"
+        )
+
+
 def make_cross_resolution_loader(
     batch_size: int,
     pin_mem: bool,
@@ -31,12 +65,16 @@ def make_cross_resolution_loader(
     min_keep: int,
     num_enc_masks: int,
     backend: str = "openslide",
-    samples_per_epoch: int | None = None,
     align_targets_to_patch_grid: bool = False,
 ):
     context_size_raw_px = max(1, int(round(float(context_fov_um) / float(context_mpp))))
+    target_size_raw_px = max(1, int(round(float(target_fov_um) / float(target_mpp))))
     context_input_size_px = snap_size_to_patch_multiple(
         size_px=context_size_raw_px,
+        patch_size=int(patch_size),
+    )
+    target_input_size_px = snap_size_to_patch_multiple(
+        size_px=target_size_raw_px,
         patch_size=int(patch_size),
     )
     dataset = CrossResolutionWSIDataset(
@@ -54,7 +92,6 @@ def make_cross_resolution_loader(
         min_target_tissue_fraction_floor=min_target_tissue_fraction_floor,
         min_target_tissue_fraction_step=min_target_tissue_fraction_step,
         backend=backend,
-        samples_per_epoch=samples_per_epoch,
         align_targets_to_patch_grid=align_targets_to_patch_grid,
     )
 
@@ -70,6 +107,12 @@ def make_cross_resolution_loader(
         patch_size=patch_size,
         nenc=num_enc_masks,
         min_keep=min_keep,
+    )
+    validate_dataset_collator_size_alignment(
+        dataset=dataset,
+        context_input_size_px=context_input_size_px,
+        target_input_size_px=target_input_size_px,
+        patch_size=patch_size,
     )
 
     loader = DataLoader(

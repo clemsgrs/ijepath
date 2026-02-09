@@ -690,7 +690,6 @@ def main() -> int:
         seed=args.seed,
         spacing_tolerance=args.spacing_tolerance,
         backend=args.wsi_backend,
-        samples_per_epoch=max(1, args.num_samples),
     )
 
     thumbnail_cache: dict[str, dict] = {}

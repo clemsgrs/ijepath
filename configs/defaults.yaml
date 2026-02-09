@@ -3,7 +3,6 @@ data:
   batch_size_per_gpu: 32  # global_batch_size = batch_size_per_gpu * world_size.
   pin_mem: true
   num_workers: 16
-  samples_per_epoch: 200000  # With epochs=100 and global_batch_size~128, this is ~156k optimizer steps total.
   seed: 0
   wsi_backend: openslide  # Backend for wholeslidedata reader.
 
@@ -31,6 +30,8 @@ data:
 
   # -- Spacing handling
   spacing_tolerance: 0.05  # Relative tolerance for near-native spacing matching.
+  low_anchor_pass_warning_threshold: 1.0  # Warn when total budget covers less than one full anchor pass.
+  high_anchor_pass_warning_threshold: 5.0  # Warn when anchors are expected to be reused heavily.
 
 meta:
   copy_data: false
@@ -48,21 +49,36 @@ mask:
   min_keep: 16
 
 optimization:
-  ema: [0.996, 1.0]
-  epochs: 100
+  ema: [0.996, 1.0]  # EMA momentum schedule [start, end] over schedule horizon.
+  total_images_budget:  # Required image budget (global images seen), no default.
   final_lr: 1.0e-06
   final_weight_decay: 0.1
-  ipe_scale: 1.0
+  ipe_scale: 1.0  # Schedule horizon multiplier: max(total_steps, int(ipe_scale * total_steps)).
   lr: 0.0002
   start_lr: 0.00002
-  warmup: 0.1
+  warmup: 0.1  # Warmup fraction of total_steps (warmup_steps=int(warmup * total_steps)).
   weight_decay: 0.04
 
 logging:
   folder: outputs/train
   write_tag: jepa
-  step_log_every_iters: 0  # 0 => disable per-step terminal logs and rely on epoch summaries.
-  checkpoint_every_epochs: 50  # Save numbered checkpoint every N epochs, plus always keep latest.
+  step_log_every_iters: 0  # 0 => disable per-step terminal logs and rely on per-pass summaries.
+  checkpoint_every_images: 1000000  # Save numbered checkpoint every N images seen.
+
+tuning:
+  enable: false
+  seed: 0
+  schedule:
+    interval_images: 1000000  # Run tuner every N global images seen.
+    run_baseline_at_zero: true
+  plugins: []
+  early_stopping:
+    enable: false
+    patience_evals: 5  # Stop after this many non-improving tuning evaluations.
+    min_evals: 3  # Minimum number of evaluations before stop condition is allowed.
+    stop_training: false
+    save_best_checkpoint: true
+    best_checkpoint_name: best-robustness.pth.tar
 
 wandb:
   enable: false

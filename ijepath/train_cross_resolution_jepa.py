@@ -1,6 +1,8 @@
 import logging
+import math
 import os
 import time
+from pathlib import Path
 from contextlib import nullcontext
 
 import numpy as np
@@ -20,7 +22,7 @@ from ijepath.helper import init_model, init_opt, load_checkpoint
 from ijepath.log.tracker import (
     finish_wandb,
     initialize_wandb,
-    log_epoch_dict,
+    log_images_seen_dict,
     save_run_config_to_wandb,
     update_log_dict,
 )
@@ -29,7 +31,7 @@ from ijepath.utils.logging import AverageMeter, CSVLogger, gpu_timer, grad_logge
 from ijepath.utils.log_utils import setup_logging
 from ijepath.utils.tensors import repeat_interleave_batch
 
-default_checkpoint_every_epochs = 50
+default_checkpoint_every_images = 1_000_000
 default_step_log_every_iters = 0
 
 _GLOBAL_SEED = 0
@@ -75,20 +77,94 @@ def should_log_iteration(itr: int, step_log_every_iters: int, loss: float) -> bo
     return (itr % step_log_every_iters) == 0
 
 
-def resolve_checkpoint_every_epochs(logging_cfg: dict) -> int:
-    checkpoint_every_epochs = int(
-        logging_cfg.get("checkpoint_every_epochs", default_checkpoint_every_epochs)
-    )
-    if checkpoint_every_epochs <= 0:
-        raise ValueError("logging.checkpoint_every_epochs must be > 0")
-    return checkpoint_every_epochs
-
-
 def resolve_use_bfloat16(requested_use_bfloat16: bool, cuda_available: bool) -> bool:
     return bool(requested_use_bfloat16 and cuda_available)
 
 
-def build_epoch_train_results(
+def resolve_checkpoint_every_images(logging_cfg: dict) -> int:
+    interval = int(logging_cfg.get("checkpoint_every_images", default_checkpoint_every_images))
+    if interval <= 0:
+        raise ValueError("logging.checkpoint_every_images must be > 0")
+    return interval
+
+
+def resolve_total_images_budget(optimization_cfg: dict) -> int:
+    total_images_budget = optimization_cfg.get("total_images_budget", None)
+    if total_images_budget is None:
+        raise ValueError("Missing required config value: optimization.total_images_budget")
+    if int(total_images_budget) <= 0:
+        raise ValueError("optimization.total_images_budget must be > 0")
+    return int(total_images_budget)
+
+
+def compute_total_steps(total_images_budget: int, global_batch_size: int) -> int:
+    if int(total_images_budget) <= 0:
+        raise ValueError("total_images_budget must be > 0")
+    if int(global_batch_size) <= 0:
+        raise ValueError("global_batch_size must be > 0")
+    return int(math.ceil(float(total_images_budget) / float(global_batch_size)))
+
+
+def compute_schedule_total_steps(total_steps: int, ipe_scale: float) -> int:
+    if int(total_steps) <= 0:
+        raise ValueError("total_steps must be > 0")
+    if float(ipe_scale) <= 0:
+        raise ValueError("ipe_scale must be > 0")
+    scaled = int(float(ipe_scale) * float(total_steps))
+    return max(int(total_steps), int(scaled))
+
+
+def crossed_image_thresholds(
+    *,
+    prev_images_seen: int,
+    new_images_seen: int,
+    next_threshold: int,
+    interval: int,
+) -> tuple[list[int], int]:
+    crossed: list[int] = []
+    threshold = int(next_threshold)
+    while threshold <= int(new_images_seen):
+        if threshold > int(prev_images_seen):
+            crossed.append(int(threshold))
+        threshold += int(interval)
+    return crossed, int(threshold)
+
+
+def checkpoint_name_for_images(tag: str, images_seen: int) -> str:
+    return f"{str(tag)}-img{int(images_seen)}.pth.tar"
+
+
+def compute_anchor_pass_budget(
+    *,
+    anchor_count: int,
+    total_images_budget: int,
+    interval_images: int,
+    run_baseline_at_zero: bool,
+) -> dict[str, float | int]:
+    if int(anchor_count) <= 0:
+        raise ValueError("anchor_count must be > 0")
+    if int(total_images_budget) <= 0:
+        raise ValueError("total_images_budget must be > 0")
+    if int(interval_images) <= 0:
+        raise ValueError("interval_images must be > 0")
+
+    anchor_passes_total = float(total_images_budget) / float(anchor_count)
+    coverage_first_pass = min(1.0, anchor_passes_total)
+    mean_anchor_reuse = max(0.0, anchor_passes_total - 1.0)
+    expected_eval_events = int(total_images_budget // interval_images)
+    if run_baseline_at_zero:
+        expected_eval_events += 1
+
+    return {
+        "anchor_count": int(anchor_count),
+        "anchor_passes_total": float(anchor_passes_total),
+        "coverage_first_pass": float(coverage_first_pass),
+        "mean_anchor_reuse": float(mean_anchor_reuse),
+        "expected_eval_events": int(expected_eval_events),
+    }
+
+
+def build_pass_train_results(
     *,
     loss_avg: float,
     loss_min: float,
@@ -96,8 +172,9 @@ def build_epoch_train_results(
     mask_a: float,
     mask_b: float,
     iter_time_ms: float,
-    epoch_time_s: float,
+    pass_time_s: float,
     images_seen: int,
+    anchor_passes_seen: float,
     images_per_sec: float,
     iterations_per_sec: float,
     lr: float,
@@ -111,8 +188,9 @@ def build_epoch_train_results(
         "mask_a": float(mask_a),
         "mask_b": float(mask_b),
         "iter_time_ms": float(iter_time_ms),
-        "epoch_time_s": float(epoch_time_s),
+        "pass_time_s": float(pass_time_s),
         "images_seen": int(images_seen),
+        "anchor_passes_seen": float(anchor_passes_seen),
         "images_per_sec": float(images_per_sec),
         "iterations_per_sec": float(iterations_per_sec),
         "lr": float(lr),
@@ -123,7 +201,7 @@ def build_epoch_train_results(
 
 def get_train_step_csv_columns() -> tuple[tuple[str, str], ...]:
     return (
-        ("%d", "epoch"),
+        ("%d", "pass_index"),
         ("%d", "iteration"),
         ("%.5f", "loss"),
         ("%.5f", "context_keep_tokens"),
@@ -136,7 +214,7 @@ def get_train_step_csv_columns() -> tuple[tuple[str, str], ...]:
 
 def build_step_log_line(
     *,
-    epoch: int,
+    pass_index: int,
     iteration: int,
     loss_avg: float,
     context_keep_tokens: float,
@@ -147,7 +225,7 @@ def build_step_log_line(
     iteration_time_ms: float,
 ) -> str:
     return (
-        f"epoch={int(epoch)} iteration={int(iteration)} "
+        f"pass_index={int(pass_index)} iteration={int(iteration)} "
         f"loss_avg={float(loss_avg):.3f} "
         f"context_keep_tokens={float(context_keep_tokens):.1f} "
         f"target_predict_tokens={float(target_predict_tokens):.1f} "
@@ -160,7 +238,7 @@ def build_step_log_line(
 
 def build_grad_stats_log_line(
     *,
-    epoch: int,
+    pass_index: int,
     iteration: int,
     first_layer_grad_norm: float,
     last_layer_grad_norm: float,
@@ -168,12 +246,73 @@ def build_grad_stats_log_line(
     grad_max: float,
 ) -> str:
     return (
-        f"epoch={int(epoch)} iteration={int(iteration)} "
+        f"pass_index={int(pass_index)} iteration={int(iteration)} "
         f"first_layer_grad_norm={float(first_layer_grad_norm):.2e} "
         f"last_layer_grad_norm={float(last_layer_grad_norm):.2e} "
         f"grad_norm_min={float(grad_min):.2e} "
         f"grad_norm_max={float(grad_max):.2e}"
     )
+
+
+def validate_encoder_input_sizes(
+    *,
+    context_images: torch.Tensor,
+    target_images: torch.Tensor,
+    expected_context_input_size_px: int,
+    expected_target_input_size_px: int,
+    patch_size: int,
+) -> None:
+    if context_images.ndim != 4:
+        raise ValueError(
+            "context_images must be rank-4 [B, C, H, W], "
+            f"got shape={tuple(context_images.shape)}"
+        )
+    if target_images.ndim != 5:
+        raise ValueError(
+            "target_images must be rank-5 [B, K, C, H, W], "
+            f"got shape={tuple(target_images.shape)}"
+        )
+
+    context_h = int(context_images.shape[-2])
+    context_w = int(context_images.shape[-1])
+    target_h = int(target_images.shape[-2])
+    target_w = int(target_images.shape[-1])
+    expected_context = int(expected_context_input_size_px)
+    expected_target = int(expected_target_input_size_px)
+    patch = int(patch_size)
+
+    if context_h != expected_context or context_w != expected_context:
+        raise ValueError(
+            "Context image size mismatch: "
+            f"expected={expected_context}x{expected_context} "
+            f"got={context_h}x{context_w}"
+        )
+    if target_h != expected_target or target_w != expected_target:
+        raise ValueError(
+            "Target image size mismatch: "
+            f"expected={expected_target}x{expected_target} "
+            f"got={target_h}x{target_w}"
+        )
+    if expected_context % patch != 0:
+        raise ValueError(
+            "Expected context input size must be divisible by patch size: "
+            f"context={expected_context} patch={patch}"
+        )
+    if expected_target % patch != 0:
+        raise ValueError(
+            "Expected target input size must be divisible by patch size: "
+            f"target={expected_target} patch={patch}"
+        )
+    if context_h % patch != 0 or context_w % patch != 0:
+        raise ValueError(
+            "Context batch tensor shape is not divisible by patch size: "
+            f"context={context_h}x{context_w} patch={patch}"
+        )
+    if target_h % patch != 0 or target_w % patch != 0:
+        raise ValueError(
+            "Target batch tensor shape is not divisible by patch size: "
+            f"target={target_h}x{target_w} patch={patch}"
+        )
 
 
 def copy_matching_state_dict_params(source: torch.nn.Module, target: torch.nn.Module) -> tuple[int, int]:
@@ -232,9 +371,6 @@ def main(
     target_fov_um = float(args["data"]["target_fov_um"])
     targets_per_context = int(args["data"]["targets_per_context"])
     seed = int(args["data"]["seed"])
-    samples_per_epoch = args["data"].get("samples_per_epoch", None)
-    if samples_per_epoch is not None:
-        samples_per_epoch = int(samples_per_epoch)
     spacing_tolerance = float(args["data"].get("spacing_tolerance", 0.05))
     min_target_tissue_fraction = float(
         args["data"].get("min_target_tissue_fraction", args["data"].get("min_tissue_fraction", 0.25))
@@ -246,6 +382,17 @@ def main(
     min_target_tissue_fraction_step = float(args["data"].get("min_target_tissue_fraction_step", 0.05))
     align_targets_to_patch_grid = args["data"].get("align_targets_to_patch_grid", False)
     wsi_backend = str(args["data"].get("wsi_backend", "openslide"))
+    low_anchor_pass_warning_threshold = float(args["data"].get("low_anchor_pass_warning_threshold", 1.0))
+    high_anchor_pass_warning_threshold = float(args["data"].get("high_anchor_pass_warning_threshold", 5.0))
+    if low_anchor_pass_warning_threshold <= 0:
+        raise ValueError("data.low_anchor_pass_warning_threshold must be > 0")
+    if high_anchor_pass_warning_threshold <= 0:
+        raise ValueError("data.high_anchor_pass_warning_threshold must be > 0")
+    if high_anchor_pass_warning_threshold <= low_anchor_pass_warning_threshold:
+        raise ValueError(
+            "data.high_anchor_pass_warning_threshold must be > "
+            "data.low_anchor_pass_warning_threshold"
+        )
 
     # -- MASK
     num_enc_masks = args["mask"]["num_enc_masks"]
@@ -276,11 +423,11 @@ def main(
     ipe_scale = args["optimization"]["ipe_scale"]
     wd = float(args["optimization"]["weight_decay"])
     final_wd = float(args["optimization"]["final_weight_decay"])
-    num_epochs = args["optimization"]["epochs"]
     warmup = args["optimization"]["warmup"]
     start_lr = args["optimization"]["start_lr"]
     lr = args["optimization"]["lr"]
     final_lr = args["optimization"]["final_lr"]
+    total_images_budget = resolve_total_images_budget(args["optimization"])
 
     # -- LOGGING
     folder = args["logging"]["folder"]
@@ -290,7 +437,7 @@ def main(
     )
     if step_log_every_iters < 0:
         raise ValueError("logging.step_log_every_iters must be >= 0")
-    checkpoint_every_epochs = resolve_checkpoint_every_epochs(args["logging"])
+    checkpoint_every_images = resolve_checkpoint_every_images(args["logging"])
 
     os.makedirs(folder, exist_ok=True)
 
@@ -307,12 +454,19 @@ def main(
     setup_logging(output=folder, level=logger_level)
 
     global_batch_size = batch_size_per_gpu * world_size
+    total_steps = compute_total_steps(
+        total_images_budget=total_images_budget,
+        global_batch_size=global_batch_size,
+    )
+
     args.setdefault("data", {})
     args["data"]["batch_size_per_gpu"] = batch_size_per_gpu
     args["data"]["global_batch_size"] = global_batch_size
     args["data"]["world_size"] = world_size
     args["data"]["context_input_size_px"] = context_input_size_px
     args["data"]["target_input_size_px"] = target_input_size_px
+    args.setdefault("optimization", {})
+    args["optimization"]["total_steps"] = total_steps
 
     wandb_cfg = dict(args.get("wandb", {}) or {})
     wandb_enabled = rank == 0 and bool(wandb_cfg.get("enable", False))
@@ -337,13 +491,15 @@ def main(
         "Iteration logging cadence: "
         f"step_log_every_iters={step_log_every_iters} (0 disables per-step logs)"
     )
-    logger.info(f"Checkpoint cadence: checkpoint_every_epochs={checkpoint_every_epochs}")
+    logger.info(
+        f"Image-budget control: total_images_budget={total_images_budget} "
+        f"total_steps={total_steps} "
+        f"checkpoint_every_images={checkpoint_every_images}"
+    )
 
     log_file = os.path.join(folder, f"{tag}_r{rank}.csv")
-    save_path = os.path.join(folder, f"{tag}" + "-ep{epoch}.pth.tar")
     latest_path = os.path.join(folder, f"{tag}-latest.pth.tar")
     load_path = os.path.join(folder, r_file) if (load_model and r_file is not None) else latest_path
-
     csv_logger = CSVLogger(log_file, *get_train_step_csv_columns())
 
     encoder, predictor = init_model(
@@ -395,11 +551,16 @@ def main(
         min_keep=min_keep,
         num_enc_masks=num_enc_masks,
         backend=wsi_backend,
-        samples_per_epoch=samples_per_epoch,
         align_targets_to_patch_grid=align_targets_to_patch_grid,
     )
     ipe = len(unsupervised_loader)
+    if ipe <= 0:
+        raise ValueError("Unsupervised loader produced zero iterations per anchor pass")
 
+    schedule_total_steps = compute_schedule_total_steps(
+        total_steps=total_steps,
+        ipe_scale=ipe_scale,
+    )
     optimizer, scaler, scheduler, wd_scheduler = init_opt(
         encoder=encoder,
         predictor=predictor,
@@ -408,9 +569,8 @@ def main(
         start_lr=start_lr,
         ref_lr=lr,
         final_lr=final_lr,
-        iterations_per_epoch=ipe,
+        total_steps=total_steps,
         warmup=warmup,
-        num_epochs=num_epochs,
         ipe_scale=ipe_scale,
         use_bfloat16=use_bfloat16,
     )
@@ -435,13 +595,15 @@ def main(
     )
 
     momentum_scheduler = (
-        ema[0] + i * (ema[1] - ema[0]) / (ipe * num_epochs * ipe_scale)
-        for i in range(int(ipe * num_epochs * ipe_scale) + 1)
+        ema[0] + i * (ema[1] - ema[0]) / schedule_total_steps
+        for i in range(int(schedule_total_steps) + 1)
     )
 
-    start_epoch = 0
+    start_pass_index = 0
+    resumed_steps_done = 0
+    resumed_images_seen: int | None = None
     if load_model:
-        encoder, predictor, target_encoder, optimizer, scaler, start_epoch = load_checkpoint(
+        encoder, predictor, target_encoder, optimizer, scaler, start_pass_index = load_checkpoint(
             device=device,
             r_path=load_path,
             encoder=encoder,
@@ -450,238 +612,487 @@ def main(
             opt=optimizer,
             scaler=scaler,
         )
-        for _ in range(start_epoch * ipe):
-            scheduler.step()
-            wd_scheduler.step()
-            next(momentum_scheduler)
+        resumed_steps_done = int(start_pass_index) * int(ipe)
+        try:
+            if os.path.exists(load_path):
+                ckpt_meta = torch.load(load_path, map_location=torch.device("cpu"))
+                resumed_steps_done = int(ckpt_meta.get("steps_done", resumed_steps_done))
+                if ckpt_meta.get("images_seen") is not None:
+                    resumed_images_seen = int(ckpt_meta.get("images_seen"))
+        except Exception as exc:
+            logger.warning("Failed to read checkpoint metadata for step resume info: %s", exc)
 
-    def save_checkpoint(epoch):
-        save_dict = {
+    resumed_steps_done = min(int(resumed_steps_done), int(total_steps))
+    for _ in range(resumed_steps_done):
+        scheduler.step()
+        wd_scheduler.step()
+        next(momentum_scheduler)
+
+    steps_done = int(resumed_steps_done)
+    images_seen = int(
+        min(
+            int(total_images_budget),
+            int(resumed_images_seen if resumed_images_seen is not None else steps_done * global_batch_size),
+        )
+    )
+    pass_index = int(start_pass_index)
+
+    def build_snapshot(*, pass_id: int, loss_avg: float) -> dict:
+        return {
             "encoder": encoder.state_dict(),
             "predictor": predictor.state_dict(),
             "target_encoder": target_encoder.state_dict(),
             "opt": optimizer.state_dict(),
             "scaler": None if scaler is None else scaler.state_dict(),
-            "epoch": epoch,
-            "loss": loss_meter.avg,
+            "pass_index": int(pass_id),
+            "steps_done": int(steps_done),
+            "images_seen": int(images_seen),
+            "loss": float(loss_avg),
             "batch_size_per_gpu": batch_size_per_gpu,
             "global_batch_size": global_batch_size,
             "world_size": world_size,
             "lr": lr,
         }
-        if rank == 0:
-            torch.save(save_dict, latest_path)
-            if (epoch + 1) % checkpoint_every_epochs == 0:
-                torch.save(save_dict, save_path.format(epoch=f"{epoch + 1}"))
 
+    def save_snapshot(snapshot: dict, *, images_tag: int | None = None, write_latest: bool = True) -> None:
+        if rank != 0:
+            return
+        if write_latest:
+            torch.save(snapshot, latest_path)
+        if images_tag is not None:
+            image_ckpt_path = os.path.join(folder, checkpoint_name_for_images(tag=tag, images_seen=images_tag))
+            torch.save(snapshot, image_ckpt_path)
+
+    tuning_cfg = dict(args.get("tuning", {}) or {})
+    tuning_enabled_cfg = bool(tuning_cfg.get("enable", False))
+    tuning_schedule_cfg = dict(tuning_cfg.get("schedule", {}) or {})
+    tune_interval_images = int(tuning_schedule_cfg.get("interval_images", default_checkpoint_every_images))
+    if tuning_enabled_cfg and tune_interval_images <= 0:
+        raise ValueError("tuning.schedule.interval_images must be > 0")
+    run_baseline_at_zero = bool(tuning_schedule_cfg.get("run_baseline_at_zero", True))
+    anchor_count = int(len(getattr(unsupervised_dataset, "anchors", [])) or len(unsupervised_dataset))
+    anchor_budget = compute_anchor_pass_budget(
+        anchor_count=anchor_count,
+        total_images_budget=total_images_budget,
+        interval_images=max(1, tune_interval_images),
+        run_baseline_at_zero=run_baseline_at_zero,
+    )
+    if not tuning_enabled_cfg:
+        anchor_budget["expected_eval_events"] = 0
+    logger.info(
+        "Anchor diversity budget: anchor_count=%d total_images_budget=%d "
+        "anchor_passes_total=%.4f coverage_first_pass=%.4f mean_anchor_reuse=%.4f "
+        "expected_eval_events=%d",
+        int(anchor_budget["anchor_count"]),
+        int(total_images_budget),
+        float(anchor_budget["anchor_passes_total"]),
+        float(anchor_budget["coverage_first_pass"]),
+        float(anchor_budget["mean_anchor_reuse"]),
+        int(anchor_budget["expected_eval_events"]),
+    )
+    if float(anchor_budget["anchor_passes_total"]) < float(low_anchor_pass_warning_threshold):
+        logger.warning(
+            "Anchor pass budget is low (anchor_passes_total=%.4f < %.4f). "
+            "Increase total_images_budget or reduce anchor catalog size to improve first-pass coverage. "
+            "For more target-placement diversity per anchor, increase data.targets_per_context.",
+            float(anchor_budget["anchor_passes_total"]),
+            float(low_anchor_pass_warning_threshold),
+        )
+    if float(anchor_budget["anchor_passes_total"]) > float(high_anchor_pass_warning_threshold):
+        logger.warning(
+            "Anchor pass budget is high (anchor_passes_total=%.4f > %.4f). "
+            "Anchor reuse may dominate context diversity. Increase anchor catalog diversity or reduce total_images_budget. "
+            "For extra within-anchor diversity, increase data.targets_per_context.",
+            float(anchor_budget["anchor_passes_total"]),
+            float(high_anchor_pass_warning_threshold),
+        )
+
+    tuner = None
+    early_stopper = None
+    early_stop_cfg = dict(tuning_cfg.get("early_stopping", {}) or {})
+    if tuning_enabled_cfg and rank == 0:
+        from ijepath.eval.tuner import Tuner
+
+        tuner = Tuner(
+            cfg=tuning_cfg,
+            device=device,
+            output_dir=Path(folder) / "tuning",
+        )
+        if bool(early_stop_cfg.get("enable", False)):
+            from ijepath.eval.early_stopping import RobustnessEarlyStopper
+
+            selected_plugin_mode = "max"
+            for plugin_cfg in list(tuning_cfg.get("plugins", []) or []):
+                plugin_cfg = dict(plugin_cfg or {})
+                if bool(plugin_cfg.get("enable", True)) and bool(plugin_cfg.get("use_for_early_stopping", False)):
+                    selected_plugin_mode = str(plugin_cfg.get("early_stopping_mode", "max"))
+                    break
+
+            early_stopper = RobustnessEarlyStopper(
+                mode=selected_plugin_mode,
+                patience_evals=int(early_stop_cfg.get("patience_evals", 5)),
+                min_evals=int(early_stop_cfg.get("min_evals", 3)),
+                checkpoint_path=Path(folder) / str(
+                    early_stop_cfg.get("best_checkpoint_name", "best-robustness.pth.tar")
+                ),
+                save_best_checkpoint=bool(early_stop_cfg.get("save_best_checkpoint", True)),
+            )
+
+    next_checkpoint_images = int((images_seen // checkpoint_every_images) + 1) * int(checkpoint_every_images)
+    if tuning_enabled_cfg:
+        next_tune_images = int((images_seen // tune_interval_images) + 1) * int(tune_interval_images)
+    else:
+        next_tune_images = 0
+    eval_index = int(images_seen // tune_interval_images) if tuning_enabled_cfg else 0
+    if tuning_enabled_cfg and run_baseline_at_zero and images_seen > 0:
+        eval_index += 1
+
+    should_stop_training = False
     try:
-        with tqdm.tqdm(
-            range(start_epoch, num_epochs),
-            desc="I-JEPATH Pretraining",
-            unit=" epoch",
-            ncols=100,
-            leave=True,
-            initial=start_epoch,
-            total=num_epochs,
-            disable=rank != 0,
-        ) as epoch_bar:
-            for epoch in epoch_bar:
-                epoch_start = time.time()
-                logger.info(f"Epoch {epoch + 1}")
-                if hasattr(unsupervised_dataset, "set_epoch"):
-                    unsupervised_dataset.set_epoch(epoch)
-                unsupervised_sampler.set_epoch(epoch)
+        if tuning_enabled_cfg and run_baseline_at_zero and images_seen == 0:
+            if rank == 0 and tuner is not None:
+                baseline_results = tuner.tune(
+                    teacher=target_encoder,
+                    eval_index=0,
+                    images_seen=0,
+                )
+                baseline_metrics = tuner.get_log_metrics(baseline_results)
+                if baseline_metrics:
+                    logger.info("Baseline tuning results at images_seen=0")
+                    for metric_name, value in baseline_metrics.items():
+                        logger.info("  %s: %.6f", metric_name, value)
+                    if wandb_enabled:
+                        baseline_log: dict[str, float | int] = {
+                            "eval_index": 0,
+                            "images_seen": 0,
+                        }
+                        update_log_dict("tune", baseline_metrics, baseline_log, step="images_seen")
+                        log_images_seen_dict(baseline_log, images_seen=0)
 
-                loss_meter = AverageMeter()
-                maskA_meter = AverageMeter()
-                maskB_meter = AverageMeter()
-                time_meter = AverageMeter()
-                epoch_last_lr = float("nan")
-                epoch_last_wd = float("nan")
-
-                if wandb_enabled:
-                    epoch_log: dict[str, float | int] = {"epoch": epoch + 1}
-                else:
-                    epoch_log = {}
-
-                images_per_iter = int(global_batch_size)
-                epoch_images_target = int(ipe * images_per_iter)
-                with tqdm.tqdm(
-                    total=epoch_images_target,
-                    desc=f"Epoch [{epoch + 1}/{num_epochs}]",
-                    unit=" img",
-                    unit_scale=True,
-                    ncols=100,
-                    leave=False,
-                    disable=rank != 0,
-                ) as iter_bar:
-                    for itr, (batch_data, masks_enc, masks_pred) in enumerate(unsupervised_loader):
-                        context_imgs = batch_data["context_images"].to(device, non_blocking=True)
-                        target_imgs = batch_data["target_images"].to(device, non_blocking=True)
-                        masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
-                        masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
-
-                        maskA_meter.update(len(masks_enc[0][0]))
-                        maskB_meter.update(len(masks_pred[0][0]))
-
-                        def train_step():
-                            _new_lr = scheduler.step()
-                            _new_wd = wd_scheduler.step()
-
-                            def forward_target():
-                                with torch.no_grad():
-                                    bsz, ntargets, channels, height, width = target_imgs.shape
-                                    targets_flat = target_imgs.view(bsz * ntargets, channels, height, width)
-                                    h = target_encoder(targets_flat)
-                                    h = F.layer_norm(h, (h.size(-1),))
-                                    h = h.mean(dim=1).view(bsz, ntargets, -1)
-                                    h = flatten_teacher_targets_for_predictor_order(
-                                        teacher=h,
-                                        batch_size=bsz,
-                                        num_pred_masks=len(masks_pred),
-                                        num_enc_masks=len(masks_enc),
-                                    )
-                                    return h
-
-                            def forward_context():
-                                z = encoder(context_imgs, masks_enc)
-                                z = predictor(z, masks_enc, masks_pred)
-                                z = pool_predictor_tokens(z)
-                                return z
-
-                            def loss_fn(z, h):
-                                loss = F.smooth_l1_loss(z, h)
-                                loss = AllReduce.apply(loss)
-                                return loss
-
-                            autocast_context = (
-                                torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-                                if use_bfloat16
-                                else nullcontext()
-                            )
-                            with autocast_context:
-                                h = forward_target()
-                                z = forward_context()
-                                loss = loss_fn(z, h)
-
-                            if use_bfloat16 and scaler is not None:
-                                scaler.scale(loss).backward()
-                                scaler.step(optimizer)
-                                scaler.update()
-                            else:
-                                loss.backward()
-                                optimizer.step()
-                            grad_stats = grad_logger(encoder.named_parameters())
-                            optimizer.zero_grad()
-
-                            with torch.no_grad():
-                                m = next(momentum_scheduler)
-                                for param_q, param_k in ema_pairs:
-                                    param_k.data.mul_(m).add_((1.0 - m) * param_q.detach().data)
-
-                            return (float(loss), _new_lr, _new_wd, grad_stats)
-
-                        (loss, _new_lr, _new_wd, grad_stats), etime = gpu_timer(train_step)
-                        epoch_last_lr = float(_new_lr)
-                        epoch_last_wd = float(_new_wd)
-
-                        loss_meter.update(loss)
-                        time_meter.update(etime)
-
-                        csv_logger.log(
-                            epoch + 1,
-                            itr,
-                            loss,
-                            maskA_meter.val,
-                            maskB_meter.val,
-                            etime,
-                            epoch_last_lr,
-                            epoch_last_wd,
+                if early_stopper is not None:
+                    baseline_selection = tuner.get_selection(baseline_results)
+                    if baseline_selection is not None and baseline_selection.get("metric_value") is not None:
+                        early_stopper.on_eval(
+                            metric_value=float(baseline_selection["metric_value"]),
+                            snapshot=build_snapshot(pass_id=0, loss_avg=float("nan")),
                         )
-                        if rank == 0:
-                            iter_bar.update(images_per_iter)
-                            iter_bar.set_postfix(
-                                loss=f"{loss_meter.avg:.3f}",
-                                lr=f"{epoch_last_lr:.2e}",
-                                wd=f"{epoch_last_wd:.2e}",
-                            )
 
-                        if should_log_iteration(
-                            itr=itr,
-                            step_log_every_iters=step_log_every_iters,
-                            loss=float(loss),
-                        ):
-                            if torch.cuda.is_available():
-                                max_mem_mb = torch.cuda.max_memory_allocated() / 1024.0**2
-                            else:
-                                max_mem_mb = 0.0
-                            logger.info(
-                                build_step_log_line(
-                                    epoch=epoch + 1,
-                                    iteration=itr,
-                                    loss_avg=float(loss_meter.avg),
-                                    context_keep_tokens=float(maskA_meter.avg),
-                                    target_predict_tokens=float(maskB_meter.avg),
-                                    weight_decay=float(epoch_last_wd),
-                                    learning_rate=float(epoch_last_lr),
-                                    max_memory_mb=float(max_mem_mb),
-                                    iteration_time_ms=float(time_meter.avg),
-                                )
-                            )
-                            if grad_stats is not None:
-                                logger.info(
-                                    build_grad_stats_log_line(
-                                        epoch=epoch + 1,
-                                        iteration=itr,
-                                        first_layer_grad_norm=float(grad_stats.first_layer),
-                                        last_layer_grad_norm=float(grad_stats.last_layer),
-                                        grad_min=float(grad_stats.min),
-                                        grad_max=float(grad_stats.max),
-                                    )
-                                )
+            if use_ddp:
+                dist.barrier()
+            eval_index = max(eval_index, 1)
 
-                        assert not np.isnan(loss), "loss is nan"
+        while steps_done < total_steps and not should_stop_training:
+            pass_start = time.time()
+            current_pass_index = int(pass_index + 1)
+            if hasattr(unsupervised_dataset, "set_pass_index"):
+                unsupervised_dataset.set_pass_index(pass_index)
+            unsupervised_sampler.set_epoch(pass_index)
 
-                epoch_seconds = time.time() - epoch_start
-                epoch_images_seen = int(ipe * global_batch_size)
-                epoch_images_per_sec = (
-                    float(epoch_images_seen) / float(epoch_seconds)
-                    if epoch_seconds > 0
-                    else 0.0
-                )
-                epoch_iterations_per_sec = (
-                    float(ipe) / float(epoch_seconds)
-                    if epoch_seconds > 0
-                    else 0.0
-                )
-                logger.info(
-                    f"Epoch {epoch + 1} summary: "
-                    f"loss(avg/min/max)={float(loss_meter.avg):.3f}/{float(loss_meter.min):.3f}/{float(loss_meter.max):.3f} "
-                    f"lr={float(epoch_last_lr):.2e} wd={float(epoch_last_wd):.2e} "
-                    f"images={epoch_images_seen} images_per_sec={epoch_images_per_sec:.1f} "
-                    f"iterations_per_sec={epoch_iterations_per_sec:.2f} iter_time_ms={float(time_meter.avg):.1f} "
-                    f"masks(avg)={float(maskA_meter.avg):.1f}/{float(maskB_meter.avg):.1f}"
-                )
-                save_checkpoint(epoch + 1)
+            loss_meter = AverageMeter()
+            maskA_meter = AverageMeter()
+            maskB_meter = AverageMeter()
+            time_meter = AverageMeter()
+            pass_last_lr = float("nan")
+            pass_last_wd = float("nan")
+            pass_images_start = int(images_seen)
+            pass_iters_done = 0
 
-                if wandb_enabled:
-                    train_results = build_epoch_train_results(
-                        loss_avg=float(loss_meter.avg),
-                        loss_min=float(loss_meter.min),
-                        loss_max=float(loss_meter.max),
-                        mask_a=float(maskA_meter.avg),
-                        mask_b=float(maskB_meter.avg),
-                        iter_time_ms=float(time_meter.avg),
-                        epoch_time_s=float(epoch_seconds),
-                        images_seen=int(epoch_images_seen),
-                        images_per_sec=float(epoch_images_per_sec),
-                        iterations_per_sec=float(epoch_iterations_per_sec),
-                        lr=float(epoch_last_lr),
-                        wd=float(epoch_last_wd),
-                        global_batch_size=int(global_batch_size),
+            remaining_steps = int(total_steps - steps_done)
+            pass_target_images = int(min(ipe, remaining_steps) * global_batch_size)
+
+            if wandb_enabled:
+                pass_log: dict[str, float | int] = {
+                    "pass_index": current_pass_index,
+                    "images_seen": int(images_seen),
+                }
+            else:
+                pass_log = {}
+
+            with tqdm.tqdm(
+                total=pass_target_images,
+                desc=f"Pass [{current_pass_index}]",
+                unit=" img",
+                unit_scale=True,
+                ncols=100,
+                leave=False,
+                disable=rank != 0,
+            ) as iter_bar:
+                for itr, (batch_data, masks_enc, masks_pred) in enumerate(unsupervised_loader):
+                    if steps_done >= total_steps or should_stop_training:
+                        break
+
+                    context_imgs = batch_data["context_images"].to(device, non_blocking=True)
+                    target_imgs = batch_data["target_images"].to(device, non_blocking=True)
+                    masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
+                    masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
+                    validate_encoder_input_sizes(
+                        context_images=context_imgs,
+                        target_images=target_imgs,
+                        expected_context_input_size_px=context_input_size_px,
+                        expected_target_input_size_px=target_input_size_px,
+                        patch_size=patch_size,
                     )
-                    update_log_dict("train", train_results, epoch_log, step="epoch")
-                    log_epoch_dict(epoch_log, epoch=epoch + 1)
+
+                    maskA_meter.update(len(masks_enc[0][0]))
+                    maskB_meter.update(len(masks_pred[0][0]))
+
+                    def train_step():
+                        _new_lr = scheduler.step()
+                        _new_wd = wd_scheduler.step()
+
+                        def forward_target():
+                            with torch.no_grad():
+                                bsz, ntargets, channels, height, width = target_imgs.shape
+                                targets_flat = target_imgs.view(bsz * ntargets, channels, height, width)
+                                h = target_encoder(targets_flat)
+                                h = F.layer_norm(h, (h.size(-1),))
+                                h = h.mean(dim=1).view(bsz, ntargets, -1)
+                                h = flatten_teacher_targets_for_predictor_order(
+                                    teacher=h,
+                                    batch_size=bsz,
+                                    num_pred_masks=len(masks_pred),
+                                    num_enc_masks=len(masks_enc),
+                                )
+                                return h
+
+                        def forward_context():
+                            z = encoder(context_imgs, masks_enc)
+                            z = predictor(z, masks_enc, masks_pred)
+                            z = pool_predictor_tokens(z)
+                            return z
+
+                        def loss_fn(z, h):
+                            loss = F.smooth_l1_loss(z, h)
+                            loss = AllReduce.apply(loss)
+                            return loss
+
+                        autocast_context = (
+                            torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+                            if use_bfloat16
+                            else nullcontext()
+                        )
+                        with autocast_context:
+                            h = forward_target()
+                            z = forward_context()
+                            loss = loss_fn(z, h)
+
+                        if use_bfloat16 and scaler is not None:
+                            scaler.scale(loss).backward()
+                            scaler.step(optimizer)
+                            scaler.update()
+                        else:
+                            loss.backward()
+                            optimizer.step()
+                        grad_stats = grad_logger(encoder.named_parameters())
+                        optimizer.zero_grad()
+
+                        with torch.no_grad():
+                            m = next(momentum_scheduler)
+                            for param_q, param_k in ema_pairs:
+                                param_k.data.mul_(m).add_((1.0 - m) * param_q.detach().data)
+
+                        return (float(loss), _new_lr, _new_wd, grad_stats)
+
+                    (loss, _new_lr, _new_wd, grad_stats), etime = gpu_timer(train_step)
+                    pass_last_lr = float(_new_lr)
+                    pass_last_wd = float(_new_wd)
+
+                    steps_done += 1
+                    pass_iters_done += 1
+                    prev_images_seen = int(images_seen)
+                    images_seen = int(min(total_images_budget, prev_images_seen + global_batch_size))
+
+                    loss_meter.update(loss)
+                    time_meter.update(etime)
+
+                    csv_logger.log(
+                        current_pass_index,
+                        itr,
+                        loss,
+                        maskA_meter.val,
+                        maskB_meter.val,
+                        etime,
+                        pass_last_lr,
+                        pass_last_wd,
+                    )
+
+                    if rank == 0:
+                        iter_bar.update(int(min(global_batch_size, max(0, total_images_budget - prev_images_seen))))
+                        iter_bar.set_postfix(
+                            loss=f"{loss_meter.avg:.3f}",
+                            lr=f"{pass_last_lr:.2e}",
+                            wd=f"{pass_last_wd:.2e}",
+                        )
+
+                    if should_log_iteration(
+                        itr=itr,
+                        step_log_every_iters=step_log_every_iters,
+                        loss=float(loss),
+                    ):
+                        if torch.cuda.is_available():
+                            max_mem_mb = torch.cuda.max_memory_allocated() / 1024.0**2
+                        else:
+                            max_mem_mb = 0.0
+                        logger.info(
+                            build_step_log_line(
+                                pass_index=current_pass_index,
+                                iteration=itr,
+                                loss_avg=float(loss_meter.avg),
+                                context_keep_tokens=float(maskA_meter.avg),
+                                target_predict_tokens=float(maskB_meter.avg),
+                                weight_decay=float(pass_last_wd),
+                                learning_rate=float(pass_last_lr),
+                                max_memory_mb=float(max_mem_mb),
+                                iteration_time_ms=float(time_meter.avg),
+                            )
+                        )
+                        if grad_stats is not None:
+                            logger.info(
+                                build_grad_stats_log_line(
+                                    pass_index=current_pass_index,
+                                    iteration=itr,
+                                    first_layer_grad_norm=float(grad_stats.first_layer),
+                                    last_layer_grad_norm=float(grad_stats.last_layer),
+                                    grad_min=float(grad_stats.min),
+                                    grad_max=float(grad_stats.max),
+                                )
+                            )
+
+                    assert not np.isnan(loss), "loss is nan"
+
+                    crossed_ckpt, next_checkpoint_images = crossed_image_thresholds(
+                        prev_images_seen=prev_images_seen,
+                        new_images_seen=images_seen,
+                        next_threshold=next_checkpoint_images,
+                        interval=checkpoint_every_images,
+                    )
+                    for crossed in crossed_ckpt:
+                        save_snapshot(
+                            build_snapshot(pass_id=current_pass_index, loss_avg=float(loss_meter.avg)),
+                            images_tag=int(crossed),
+                            write_latest=True,
+                        )
+
+                    if tuning_enabled_cfg:
+                        crossed_tune, next_tune_images = crossed_image_thresholds(
+                            prev_images_seen=prev_images_seen,
+                            new_images_seen=images_seen,
+                            next_threshold=next_tune_images,
+                            interval=tune_interval_images,
+                        )
+                    else:
+                        crossed_tune = []
+
+                    for crossed in crossed_tune:
+                        current_eval_index = int(eval_index)
+                        if rank == 0 and tuner is not None:
+                            tune_results = tuner.tune(
+                                teacher=target_encoder,
+                                eval_index=current_eval_index,
+                                images_seen=int(crossed),
+                            )
+                            tune_metrics = tuner.get_log_metrics(tune_results)
+                            if tune_metrics:
+                                logger.info(
+                                    "Tuning results at images_seen=%d (eval_index=%d): %s",
+                                    int(crossed),
+                                    current_eval_index,
+                                    ", ".join(f"{k}={v:.5f}" for k, v in sorted(tune_metrics.items())),
+                                )
+                            if wandb_enabled and tune_metrics:
+                                tune_log: dict[str, float | int] = {
+                                    "eval_index": current_eval_index,
+                                    "images_seen": int(crossed),
+                                }
+                                update_log_dict("tune", tune_metrics, tune_log, step="images_seen")
+                                log_images_seen_dict(tune_log, images_seen=int(crossed))
+
+                            if early_stopper is not None:
+                                selection = tuner.get_selection(tune_results)
+                                if selection is not None and selection.get("metric_value") is not None:
+                                    early_stopper.on_eval(
+                                        metric_value=float(selection["metric_value"]),
+                                        snapshot=build_snapshot(
+                                            pass_id=current_pass_index,
+                                            loss_avg=float(loss_meter.avg),
+                                        ),
+                                    )
+                                    if bool(early_stop_cfg.get("stop_training", False)) and early_stopper.should_stop:
+                                        should_stop_training = True
+
+                        if use_ddp:
+                            dist.barrier()
+                        eval_index += 1
+
+                    if steps_done >= total_steps or should_stop_training:
+                        break
+
+            pass_seconds = time.time() - pass_start
+            pass_images_processed = int(images_seen - pass_images_start)
+            pass_images_per_sec = (
+                float(pass_images_processed) / float(pass_seconds)
+                if pass_seconds > 0
+                else 0.0
+            )
+            pass_iterations_per_sec = (
+                float(pass_iters_done) / float(pass_seconds)
+                if pass_seconds > 0
+                else 0.0
+            )
+            anchor_passes_seen = float(images_seen) / float(max(1, anchor_count))
+
+            logger.info(
+                f"Pass {current_pass_index} summary: "
+                f"loss(avg/min/max)={float(loss_meter.avg):.3f}/{float(loss_meter.min):.3f}/{float(loss_meter.max):.3f} "
+                f"lr={float(pass_last_lr):.2e} wd={float(pass_last_wd):.2e} "
+                f"images_seen={images_seen}/{total_images_budget} "
+                f"anchor_passes_seen={anchor_passes_seen:.4f} "
+                f"images_per_sec={pass_images_per_sec:.1f} "
+                f"iterations_per_sec={pass_iterations_per_sec:.2f} "
+                f"iter_time_ms={float(time_meter.avg):.1f} "
+                f"masks(avg)={float(maskA_meter.avg):.1f}/{float(maskB_meter.avg):.1f}"
+            )
+
+            save_snapshot(
+                build_snapshot(pass_id=current_pass_index, loss_avg=float(loss_meter.avg)),
+                images_tag=None,
+                write_latest=True,
+            )
+
+            if wandb_enabled:
+                train_results = build_pass_train_results(
+                    loss_avg=float(loss_meter.avg),
+                    loss_min=float(loss_meter.min),
+                    loss_max=float(loss_meter.max),
+                    mask_a=float(maskA_meter.avg),
+                    mask_b=float(maskB_meter.avg),
+                    iter_time_ms=float(time_meter.avg),
+                    pass_time_s=float(pass_seconds),
+                    images_seen=int(images_seen),
+                    anchor_passes_seen=float(anchor_passes_seen),
+                    images_per_sec=float(pass_images_per_sec),
+                    iterations_per_sec=float(pass_iterations_per_sec),
+                    lr=float(pass_last_lr),
+                    wd=float(pass_last_wd),
+                    global_batch_size=int(global_batch_size),
+                )
+                update_log_dict("train", train_results, pass_log, step="images_seen")
+                log_images_seen_dict(pass_log, images_seen=int(images_seen))
+
+            pass_index += 1
+
+        final_snapshot = build_snapshot(
+            pass_id=max(0, pass_index),
+            loss_avg=float("nan"),
+        )
+        save_snapshot(
+            final_snapshot,
+            images_tag=int(images_seen),
+            write_latest=True,
+        )
+
+        if should_stop_training:
+            logger.info("Training terminated early by robustness early stopping at images_seen=%d", images_seen)
     finally:
         if wandb_enabled:
             finish_wandb()

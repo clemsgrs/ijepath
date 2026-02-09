@@ -5,6 +5,8 @@ omegaconf
 tqdm
 wandb
 numpy<2
+pandas
+scikit-learn
 opencv-python
 submitit
 wholeslidedata<0.0.16

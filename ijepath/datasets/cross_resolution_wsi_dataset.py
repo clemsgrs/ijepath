@@ -51,7 +51,6 @@ class CrossResolutionWSIDataset(Dataset):
         min_target_tissue_fraction_floor: float | None = None,
         min_target_tissue_fraction_step: float = 0.05,
         backend: str = "openslide",
-        samples_per_epoch: int | None = None,
         align_targets_to_patch_grid: bool = False,
     ) -> None:
         self.anchor_catalog_csv = str(anchor_catalog_csv)
@@ -107,15 +106,7 @@ class CrossResolutionWSIDataset(Dataset):
         self.anchors = self._load_anchor_rows(Path(self.anchor_catalog_csv))
         if not self.anchors:
             raise ValueError(f"No anchors found in catalog: {self.anchor_catalog_csv}")
-
-        if samples_per_epoch is None:
-            self.samples_per_epoch = len(self.anchors)
-        else:
-            self.samples_per_epoch = int(samples_per_epoch)
-            if self.samples_per_epoch <= 0:
-                raise ValueError("samples_per_epoch must be > 0 when provided")
-
-        self.current_epoch = 0
+        self.current_pass_index = 0
         self._reader_cache: Dict[str, WholeSlideDataReaderAdapter] = {}
         self._resolution_plan_cache: Dict[str, dict] = {}
 
@@ -125,19 +116,19 @@ class CrossResolutionWSIDataset(Dataset):
             return [dict(row) for row in reader]
 
     def __len__(self) -> int:
-        return self.samples_per_epoch
+        return len(self.anchors)
 
-    def set_epoch(self, epoch: int) -> None:
-        self.current_epoch = int(epoch)
+    def set_pass_index(self, pass_index: int) -> None:
+        self.current_pass_index = int(pass_index)
 
     def _rng_seed_for(self, index: int, anchor_attempt: int) -> int:
-        # Epoch-aware seeding ensures repeated indices can yield different
-        # target placements across epochs while remaining deterministic.
+        # Pass-aware seeding ensures repeated indices can yield different
+        # target placements across anchor passes while remaining deterministic.
         return (
             int(self.seed)
             + int(index)
             + int(anchor_attempt) * 1_000_003
-            + int(self.current_epoch) * 10_000_019
+            + int(self.current_pass_index) * 10_000_019
         )
 
     def _get_reader(self, row: dict) -> WholeSlideDataReaderAdapter:
@@ -579,7 +570,7 @@ class CrossResolutionWSIDataset(Dataset):
                 "slide_id": anchor["slide_id"],
                 "anchor_id": anchor["anchor_id"],
                 "anchor_retry_offset": int(anchor_attempt),
-                "dataset_epoch": int(self.current_epoch),
+                "dataset_pass_index": int(self.current_pass_index),
                 "requested_context_mpp": self.context_mpp,
                 "requested_target_mpp": self.target_mpp,
                 "output_context_mpp": self.context_output_mpp,
