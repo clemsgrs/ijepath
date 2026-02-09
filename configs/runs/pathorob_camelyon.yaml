@@ -29,6 +29,7 @@ tuning:
   schedule:
     interval_images: 10000  # Run tuner every N global images seen.
     run_baseline_at_zero: true
+  data_dir: /data/pathology/projects/clement/discern/data/eval
   plugins:
     - type: pathorob
       enable: true
@@ -43,8 +44,13 @@ tuning:
         normalize: imagenet
       datasets:
         camelyon:
+          enable: false
+          manifest_csv: ${data_dir}/pathorob/camelyon/benchmark.csv
+          id_centers: ["RUMC", "UMCU"]
+          ood_centers: ["CWZ", "RST", "LPON"]
+        camelyon_tiny:
           enable: true
-          manifest_csv: data/pathorob/camelyon_manifest.csv
+          manifest_csv: ${data_dir}/pathorob/camelyon_tiny/benchmark.csv
           id_centers: ["RUMC", "UMCU"]
           ood_centers: ["CWZ", "RST", "LPON"]
       ri:
@@ -61,15 +67,15 @@ tuning:
         k_min: 2
         k_max: 10
   early_stopping:
-    enable: true
+    enable: false
     patience_evals: 5  # Stop after this many non-improving tuning evaluations.
     min_evals: 3  # Minimum number of evaluations before stop condition is allowed.
-    stop_training: false
+    stop_training: false  # If true, terminate JEPA training once the early-stopping criterion is met.
     save_best_checkpoint: true
     best_checkpoint_name: best-robustness.pth.tar
 
 logging:
-  folder: outputs/pathorob-camelyon-image-budget
+  folder: outputs/${wandb.exp_name}
   write_tag: jepa-pathorob
   step_log_every_iters: 0
   checkpoint_every_images: 100000
