@@ -101,7 +101,7 @@ class MaskCollator(object):
                 if timeout == 0:
                     tries += 1
                     timeout = og_timeout
-                    logger.warning(f'Mask generator says: "Valid mask not found, decreasing acceptable-regions [{tries}]"')
+                    logger.warning(f'WARNING! Mask generator says: "Valid mask not found, decreasing acceptable-regions [{tries}]"')
         mask = mask.squeeze()
         # --
         mask_complement = torch.ones((self.height, self.width), dtype=torch.int32)
@@ -152,7 +152,7 @@ class MaskCollator(object):
                 if self.allow_overlap:
                     acceptable_regions= None
             except Exception as e:
-                logger.warning(f'Encountered exception in mask-generator {e}')
+                logger.warning(f'WARNING! Encountered exception in mask-generator {e}')
 
             masks_e = []
             for _ in range(self.nenc):

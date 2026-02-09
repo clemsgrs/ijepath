@@ -357,7 +357,7 @@ def main(
         torch.cuda.set_device(device)
 
     if requested_use_bfloat16 and not use_bfloat16:
-        logger.warning("Disabled bfloat16 AMP because CUDA is unavailable in this runtime.")
+        logger.warning("WARNING! Disabled bfloat16 AMP because CUDA is unavailable in this runtime.")
 
     # -- DATA
     batch_size_per_gpu = int(args["data"].get("batch_size_per_gpu", args["data"].get("batch_size")))
@@ -484,17 +484,19 @@ def main(
         f"is_main_process={rank == 0}"
     )
     logger.info(
-        f"Batch sizing: batch_size_per_gpu={batch_size_per_gpu} "
-        f"global_batch_size={global_batch_size}"
+        f"Batch sizing:\n"
+        f" - batch_size_per_gpu={batch_size_per_gpu}\n"
+        f" - global_batch_size={global_batch_size}"
     )
     logger.info(
-        "Iteration logging cadence: "
-        f"step_log_every_iters={step_log_every_iters} (0 disables per-step logs)"
+        "Iteration logging cadence:\n"
+        f" - step_log_every_iters={step_log_every_iters} (0 disables per-step logs)"
     )
     logger.info(
-        f"Image-budget control: total_images_budget={total_images_budget} "
-        f"total_steps={total_steps} "
-        f"checkpoint_every_images={checkpoint_every_images}"
+        "Image-budget control:\n"
+        f" - total_images_budget={total_images_budget:,}\n"
+        f" - total_steps={total_steps:,}\n"
+        f" - checkpoint_every_images={checkpoint_every_images:,}"
     )
 
     log_file = os.path.join(folder, f"{tag}_r{rank}.csv")
@@ -524,8 +526,9 @@ def main(
         target=target_encoder,
     )
     logger.info(
-        f"Initialized target encoder from context encoder: "
-        f"matched_state_entries={matched_params} skipped_state_entries={skipped_params}"
+        "Initialized target encoder from context encoder:\n"
+        f" - matched_state_entries={matched_params}\n"
+        f" - skipped_state_entries={skipped_params}"
     )
 
     unsupervised_dataset, unsupervised_loader, unsupervised_sampler = make_cross_resolution_loader(
@@ -620,7 +623,7 @@ def main(
                 if ckpt_meta.get("images_seen") is not None:
                     resumed_images_seen = int(ckpt_meta.get("images_seen"))
         except Exception as exc:
-            logger.warning("Failed to read checkpoint metadata for step resume info: %s", exc)
+            logger.warning("WARNING! Failed to read checkpoint metadata for step resume info: %s", exc)
 
     resumed_steps_done = min(int(resumed_steps_done), int(total_steps))
     for _ in range(resumed_steps_done):
@@ -680,31 +683,24 @@ def main(
     if not tuning_enabled_cfg:
         anchor_budget["expected_eval_events"] = 0
     logger.info(
-        "Anchor diversity budget: anchor_count=%d total_images_budget=%d "
-        "anchor_passes_total=%.4f coverage_first_pass=%.4f mean_anchor_reuse=%.4f "
-        "expected_eval_events=%d",
-        int(anchor_budget["anchor_count"]),
-        int(total_images_budget),
-        float(anchor_budget["anchor_passes_total"]),
-        float(anchor_budget["coverage_first_pass"]),
-        float(anchor_budget["mean_anchor_reuse"]),
-        int(anchor_budget["expected_eval_events"]),
+        "Anchor diversity budget:\n"
+        f" - anchor_count={int(anchor_budget['anchor_count']):,}\n"
+        f" - total_images_budget={int(total_images_budget):,}\n"
+        f" - coverage_first_pass={float(anchor_budget['coverage_first_pass']):.2f}\n"
+        f" - mean_anchor_reuse={float(anchor_budget['mean_anchor_reuse']):.2f}\n"
+        f" - expected_eval_events={int(anchor_budget['expected_eval_events']):,}"
     )
     if float(anchor_budget["anchor_passes_total"]) < float(low_anchor_pass_warning_threshold):
         logger.warning(
-            "Anchor pass budget is low (anchor_passes_total=%.4f < %.4f). "
+            f"WARNING! Anchor pass budget is low (anchor_passes_total={float(anchor_budget['anchor_passes_total']):.2f} < {low_anchor_pass_warning_threshold}). "
             "Increase total_images_budget or reduce anchor catalog size to improve first-pass coverage. "
-            "For more target-placement diversity per anchor, increase data.targets_per_context.",
-            float(anchor_budget["anchor_passes_total"]),
-            float(low_anchor_pass_warning_threshold),
+            "For extra target-placement diversity per anchor, increase data.targets_per_context."
         )
     if float(anchor_budget["anchor_passes_total"]) > float(high_anchor_pass_warning_threshold):
         logger.warning(
-            "Anchor pass budget is high (anchor_passes_total=%.4f > %.4f). "
-            "Anchor reuse may dominate context diversity. Increase anchor catalog diversity or reduce total_images_budget. "
-            "For extra within-anchor diversity, increase data.targets_per_context.",
-            float(anchor_budget["anchor_passes_total"]),
-            float(high_anchor_pass_warning_threshold),
+            f"WARNING! Anchor pass budget is high (anchor_passes_total={float(anchor_budget['anchor_passes_total']):.2f} > {high_anchor_pass_warning_threshold}). "
+            "Anchor reuse may dominate context diversity. Increase anchor catalog diversity (add slides) or reduce total_images_budget. "
+            "For extra target-placement diversity per anchor, increase data.targets_per_context."
         )
 
     tuner = None
@@ -1092,7 +1088,7 @@ def main(
         )
 
         if should_stop_training:
-            logger.info("Training terminated early by robustness early stopping at images_seen=%d", images_seen)
+            logger.info(f"Training terminated early by robustness early stopping at images_seen={images_seen}")
     finally:
         if wandb_enabled:
             finish_wandb()

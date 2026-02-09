@@ -336,7 +336,7 @@ class PathoROBPlugin(BenchmarkPlugin):
         datasets_cfg = dict(self.cfg.get("datasets", {}) or {})
         any_enabled = any(bool(dict(v).get("enable", False)) for v in datasets_cfg.values())
         if not any_enabled:
-            logger.warning("[PathoROB] No datasets are enabled for evaluation.")
+            logger.warning("WARNING! [PathoROB] No datasets are enabled for evaluation.")
 
         for dataset_name, raw_cfg in datasets_cfg.items():
             dataset_cfg = dict(raw_cfg or {})
