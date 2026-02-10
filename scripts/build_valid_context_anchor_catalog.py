@@ -287,7 +287,8 @@ def main() -> int:
 
     print(f"wrote_anchor_catalog={output_path}")
     print(f"wrote_report={report_path}")
-    print(f"anchors_total={len(anchor_rows)}")
+    print(f"slides total={len(slides):,}")
+    print(f"anchors total={len(anchor_rows):,}")
     return 0
 
 

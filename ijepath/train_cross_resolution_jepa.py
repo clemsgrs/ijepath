@@ -527,15 +527,15 @@ def main(
         pred_emb_dim=pred_emb_dim,
         architecture=architecture,
     )
-    target_encoder, _unused_target_predictor = init_model(
+    target_encoder, _ = init_model(
         device=device,
         patch_size=patch_size,
         crop_size=target_input_size_px,
         pred_depth=pred_depth,
         pred_emb_dim=pred_emb_dim,
         architecture=architecture,
+        init_predictor=False,
     )
-    del _unused_target_predictor
     matched_params, skipped_params = copy_matching_state_dict_params(
         source=encoder,
         target=target_encoder,
