@@ -2,43 +2,48 @@ ARG PYTHON_VERSION=3.10
 ARG PYTORCH_VERSION=2.0.1
 ARG TORCHVISION_VERSION=0.15.2
 
-FROM python:${PYTHON_VERSION}-slim
+FROM ubuntu:22.04
 
 ARG PYTHON_VERSION
 ARG PYTORCH_VERSION
 ARG TORCHVISION_VERSION
 
-ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PIP_NO_CACHE_DIR=1
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe/Amsterdam
 
-WORKDIR /workspace
+WORKDIR /opt/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    git \
-    libglib2.0-0 \
-    libgl1 \
-    libjpeg62-turbo \
-    libopenjp2-7 \
-    libopenslide0 \
-    libpng16-16 \
-    libtiff6 \
     libtiff-dev \
     zlib1g-dev \
+    curl \
+    vim screen \
+    zip unzip \
+    git \
+    openssh-server \
+    build-essential \
+    ninja-build \
+    python3-pip python3-dev python-is-python3 \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# install ASAP
+# ASAP
 ARG ASAP_URL=https://github.com/computationalpathologygroup/ASAP/releases/download/ASAP-2.2-(Nightly)/ASAP-2.2-Ubuntu2204.deb
-RUN apt-get update && curl -L ${ASAP_URL} -o /tmp/ASAP.deb && apt-get install --assume-yes /tmp/ASAP.deb && \
-    SITE_PACKAGES=`python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"` && \
-    printf "/opt/ASAP/bin/\n" > "${SITE_PACKAGES}/asap.pth" && \
-    apt-get clean && \
+RUN set -eux; \
+    apt-get update; \
+    curl -L "${ASAP_URL}" -o /tmp/ASAP.deb; \
+    apt-get install -y --no-install-recommends /tmp/ASAP.deb; \
+    SITE_PACKAGES=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"); \
+    printf "/opt/ASAP/bin/\n" > "${SITE_PACKAGES}/asap.pth"; \
+    rm -f /tmp/ASAP.deb; \
+    apt-get clean; \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.in /tmp/requirements.in
 
-# Install CPU-only runtime dependencies for smoke/integration tests from the shared dependency source.
 RUN cp /tmp/requirements.in /tmp/requirements.ci.in \
     && sed -i -e "s|%PYTORCH_VERSION%|${PYTORCH_VERSION}|g" /tmp/requirements.ci.in \
     && sed -i -e "s|%TORCHVISION_VERSION%|${TORCHVISION_VERSION}|g" /tmp/requirements.ci.in \
@@ -48,7 +53,7 @@ RUN cp /tmp/requirements.in /tmp/requirements.ci.in \
       --extra-index-url https://download.pytorch.org/whl/cpu \
       -r /tmp/requirements.ci.in
 
-COPY . /workspace
-ENV PYTHONPATH=/workspace
+COPY . /opt/app
+ENV PYTHONPATH=/opt/app
 
 CMD ["python", "-m", "pytest", "-m", "integration", "tests/test_pipeline_integration.py"]
