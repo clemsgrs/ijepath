@@ -64,7 +64,7 @@ def make_cross_resolution_loader(
     min_target_tissue_fraction_step: float,
     min_keep: int,
     num_enc_masks: int,
-    backend: str = "openslide",
+    backend: str = "asap",
     align_targets_to_patch_grid: bool = False,
 ):
     context_size_raw_px = max(1, int(round(float(context_fov_um) / float(context_mpp))))

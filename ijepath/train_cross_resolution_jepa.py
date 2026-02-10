@@ -396,7 +396,7 @@ def main(
         min_target_tissue_fraction_floor = float(min_target_tissue_fraction_floor)
     min_target_tissue_fraction_step = float(args["data"].get("min_target_tissue_fraction_step", 0.05))
     align_targets_to_patch_grid = args["data"].get("align_targets_to_patch_grid", False)
-    wsi_backend = str(args["data"].get("wsi_backend", "openslide"))
+    wsi_backend = str(args["data"].get("wsi_backend", "asap"))
     low_anchor_pass_warning_threshold = float(args["data"].get("low_anchor_pass_warning_threshold", 1.0))
     high_anchor_pass_warning_threshold = float(args["data"].get("high_anchor_pass_warning_threshold", 5.0))
     if low_anchor_pass_warning_threshold <= 0:

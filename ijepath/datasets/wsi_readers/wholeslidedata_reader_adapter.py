@@ -64,7 +64,7 @@ class WholeSlideDataReaderAdapter:
         self,
         wsi_path: str,
         mask_path: Optional[str] = None,
-        backend: str = "openslide",
+        backend: str = "asap",
     ) -> None:
         self.wsi_path = str(wsi_path)
         self.mask_path = None if mask_path is None else str(mask_path)

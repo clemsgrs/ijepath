@@ -47,18 +47,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenslide0 \
     libpng16-16 \
     libtiff5 \
+    libtiff-dev \
+    zlib1g-dev \
     && mkdir /var/run/sshd \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN chown -R user:user /opt
-RUN chmod -R 775 /opt
-
-USER user
-
-ENV VIRTUAL_ENV=/opt/venv
-RUN python -m venv $VIRTUAL_ENV
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+# install ASAP
+ARG ASAP_URL=https://github.com/computationalpathologygroup/ASAP/releases/download/ASAP-2.2-(Nightly)/ASAP-2.2-Ubuntu2204.deb
+RUN apt-get update && curl -L ${ASAP_URL} -o /tmp/ASAP.deb && apt-get install --assume-yes /tmp/ASAP.deb && \
+    SITE_PACKAGES=`python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"` && \
+    printf "/opt/ASAP/bin/\n" > "${SITE_PACKAGES}/asap.pth" && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/app
 
@@ -76,7 +77,10 @@ RUN CUDA_IDENTIFIER_PYTORCH=$(echo "cu${CUDA_MAJOR_VERSION}" | sed "s|\.||g" | c
     && python -m piptools sync \
     && rm -rf ~/.cache/pip*
 
-COPY --chown=user:user . /opt/app
-ENV PYTHONPATH=/opt/app
-
 EXPOSE 22 8888
+
+RUN chown -R user:user /opt
+RUN chmod -R 775 /opt
+
+# switch to user
+USER user

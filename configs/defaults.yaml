@@ -4,7 +4,7 @@ data:
   pin_mem: true
   num_workers: 16
   seed: 0
-  wsi_backend: openslide  # Backend for wholeslidedata reader.
+  wsi_backend: asap  # backend for wholeslidedata reader
 
   # -- Required paths (override in run config)
   slide_manifest_csv:

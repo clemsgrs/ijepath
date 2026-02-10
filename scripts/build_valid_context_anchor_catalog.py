@@ -3,6 +3,7 @@ import argparse
 import csv
 import json
 import sys
+import tqdm
 from pathlib import Path
 
 import cv2
@@ -23,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--slide-index", required=True, type=str, help="Slide metadata JSONL path")
     parser.add_argument("--profile", required=True, type=str, help="Sampling profile YAML path")
     parser.add_argument("--output", required=True, type=str, help="Output anchor CSV path")
-    parser.add_argument("--backend", type=str, default="openslide", help="wholeslidedata backend")
+    parser.add_argument("--backend", type=str, default="asap", help="wholeslidedata backend")
     parser.add_argument("--qc-overlays-dir", type=str, default=None, help="Optional QC overlay output directory")
     parser.add_argument("--qc-per-slide", type=int, default=32, help="Number of anchors to draw in QC image")
     return parser.parse_args()
@@ -114,128 +115,135 @@ def main() -> int:
     anchor_rows = []
     build_report_rows = []
 
-    for slide in slides:
-        if slide.get("status") != "ok":
-            build_report_rows.append(
-                {
-                    "slide_id": slide.get("slide_id"),
-                    "status": "skipped",
-                    "reason": "slide_status_not_ok",
-                    "anchors": 0,
-                }
-            )
-            continue
-        if not slide.get("mask_path"):
-            build_report_rows.append(
-                {
-                    "slide_id": slide.get("slide_id"),
-                    "status": "skipped",
-                    "reason": "missing_mask_path",
-                    "anchors": 0,
-                }
-            )
-            continue
-
-        adapter = WholeSlideDataReaderAdapter(
-            wsi_path=slide["wsi_path"],
-            mask_path=slide["mask_path"],
-            backend=args.backend,
-        )
-
-        mask_spacing0 = float(slide["mask_level0_spacing_mpp"])
-        mask_w = int(slide["mask_level0_width"])
-        mask_h = int(slide["mask_level0_height"])
-        mask_to_wsi_x = float(slide["mask_to_wsi_scale_x"])
-        mask_to_wsi_y = float(slide["mask_to_wsi_scale_y"])
-
-        context_size_mask_px = max(1, int(round(context_fov_um / mask_spacing0)))
-        half_mask = context_size_mask_px // 2
-        stride_mask = max(1, int(round(context_size_mask_px * anchor_stride_fraction)))
-
-        slide_anchor_count = 0
-        slide_anchor_centers_mask = []
-        for cy_mask in range(half_mask, max(half_mask + 1, mask_h - half_mask), stride_mask):
-            for cx_mask in range(half_mask, max(half_mask + 1, mask_w - half_mask), stride_mask):
-                x0 = cx_mask - half_mask
-                y0 = cy_mask - half_mask
-                x1 = x0 + context_size_mask_px
-                y1 = y0 + context_size_mask_px
-                if x0 < 0 or y0 < 0 or x1 > mask_w or y1 > mask_h:
-                    continue
-
-                mask_patch = adapter.get_patch_by_center_level0(
-                    center_x_level0=int(cx_mask),
-                    center_y_level0=int(cy_mask),
-                    width_pixels_at_spacing=context_size_mask_px,
-                    height_pixels_at_spacing=context_size_mask_px,
-                    spacing_mpp=mask_spacing0,
-                    use_mask=True,
-                )
-                tissue_fraction = compute_tissue_fraction(mask_patch)
-                if tissue_fraction < min_tissue_fraction:
-                    continue
-
-                center_x_level0 = int(round(cx_mask * mask_to_wsi_x))
-                center_y_level0 = int(round(cy_mask * mask_to_wsi_y))
-                in_bounds = adapter.level0_center_in_bounds(
-                    center_x_level0=center_x_level0,
-                    center_y_level0=center_y_level0,
-                    size_pixels_at_spacing=context_size_px,
-                    spacing_mpp=context_mpp,
-                )
-                if not in_bounds:
-                    continue
-
-                anchor_id = f"{slide['slide_id']}_{slide_anchor_count:07d}"
-                anchor_rows.append(
+    with tqdm.tqdm(
+        slides,
+        desc="Processing slides",
+        total=len(slides),
+        unit="slide",
+        leave=True,
+    ) as t:
+        for slide in t:
+            if slide.get("status") != "ok":
+                build_report_rows.append(
                     {
-                        "anchor_id": anchor_id,
-                        "slide_id": slide["slide_id"],
-                        "profile_id": profile_id,
-                        "wsi_path": slide["wsi_path"],
-                        "mask_path": slide["mask_path"],
-                        "center_x_level0": center_x_level0,
-                        "center_y_level0": center_y_level0,
-                        "center_x_mask": cx_mask,
-                        "center_y_mask": cy_mask,
-                        "tissue_fraction": round(tissue_fraction, 6),
-                        "is_in_bounds": 1,
-                        "wsi_level0_spacing_mpp": slide["wsi_level0_spacing_mpp"],
-                        "mask_level0_spacing_mpp": slide["mask_level0_spacing_mpp"],
-                        "context_mpp": context_mpp,
-                        "target_mpp": target_mpp,
-                        "context_fov_um": context_fov_um,
-                        "target_fov_um": target_fov_um,
-                        "targets_per_context": targets_per_context,
-                        "min_tissue_fraction": min_tissue_fraction,
-                        "target_margin_um": target_margin_um,
-                        "target_margin_context_px": target_margin_context_px,
-                        "context_size_px": context_size_px,
-                        "target_size_context_px": target_size_context_px,
-                        "spacing_tolerance": spacing_tolerance,
+                        "slide_id": slide.get("slide_id"),
+                        "status": "skipped",
+                        "reason": "slide_status_not_ok",
+                        "anchors": 0,
                     }
                 )
-                slide_anchor_centers_mask.append((cx_mask, cy_mask))
-                slide_anchor_count += 1
+                continue
+            if not slide.get("mask_path"):
+                build_report_rows.append(
+                    {
+                        "slide_id": slide.get("slide_id"),
+                        "status": "skipped",
+                        "reason": "missing_mask_path",
+                        "anchors": 0,
+                    }
+                )
+                continue
 
-        build_report_rows.append(
-            {
-                "slide_id": slide["slide_id"],
-                "status": "ok" if slide_anchor_count > 0 else "failed",
-                "reason": "" if slide_anchor_count > 0 else "no_valid_anchors",
-                "anchors": slide_anchor_count,
-            }
-        )
-
-        if args.qc_overlays_dir:
-            qc_path = Path(args.qc_overlays_dir).resolve() / f"{slide['slide_id']}.png"
-            write_qc_overlay(
-                qc_path=qc_path,
-                mask_shape=(mask_w, mask_h),
-                anchors_mask=slide_anchor_centers_mask,
-                context_size_mask_px=context_size_mask_px,
-                max_points=args.qc_per_slide,
+            adapter = WholeSlideDataReaderAdapter(
+                wsi_path=slide["wsi_path"],
+                mask_path=slide["mask_path"],
+                backend=args.backend,
             )
+
+            mask_spacing0 = float(slide["mask_level0_spacing_mpp"])
+            mask_w = int(slide["mask_level0_width"])
+            mask_h = int(slide["mask_level0_height"])
+            mask_to_wsi_x = float(slide["mask_to_wsi_scale_x"])
+            mask_to_wsi_y = float(slide["mask_to_wsi_scale_y"])
+
+            context_size_mask_px = max(1, int(round(context_fov_um / mask_spacing0)))
+            half_mask = context_size_mask_px // 2
+            stride_mask = max(1, int(round(context_size_mask_px * anchor_stride_fraction)))
+
+            slide_anchor_count = 0
+            slide_anchor_centers_mask = []
+            for cy_mask in range(half_mask, max(half_mask + 1, mask_h - half_mask), stride_mask):
+                for cx_mask in range(half_mask, max(half_mask + 1, mask_w - half_mask), stride_mask):
+                    x0 = cx_mask - half_mask
+                    y0 = cy_mask - half_mask
+                    x1 = x0 + context_size_mask_px
+                    y1 = y0 + context_size_mask_px
+                    if x0 < 0 or y0 < 0 or x1 > mask_w or y1 > mask_h:
+                        continue
+
+                    mask_patch = adapter.get_patch_by_center_level0(
+                        center_x_level0=int(cx_mask),
+                        center_y_level0=int(cy_mask),
+                        width_pixels_at_spacing=context_size_mask_px,
+                        height_pixels_at_spacing=context_size_mask_px,
+                        spacing_mpp=mask_spacing0,
+                        use_mask=True,
+                    )
+                    tissue_fraction = compute_tissue_fraction(mask_patch)
+                    if tissue_fraction < min_tissue_fraction:
+                        continue
+
+                    center_x_level0 = int(round(cx_mask * mask_to_wsi_x))
+                    center_y_level0 = int(round(cy_mask * mask_to_wsi_y))
+                    in_bounds = adapter.level0_center_in_bounds(
+                        center_x_level0=center_x_level0,
+                        center_y_level0=center_y_level0,
+                        size_pixels_at_spacing=context_size_px,
+                        spacing_mpp=context_mpp,
+                    )
+                    if not in_bounds:
+                        continue
+
+                    anchor_id = f"{slide['slide_id']}_{slide_anchor_count:07d}"
+                    anchor_rows.append(
+                        {
+                            "anchor_id": anchor_id,
+                            "slide_id": slide["slide_id"],
+                            "profile_id": profile_id,
+                            "wsi_path": slide["wsi_path"],
+                            "mask_path": slide["mask_path"],
+                            "center_x_level0": center_x_level0,
+                            "center_y_level0": center_y_level0,
+                            "center_x_mask": cx_mask,
+                            "center_y_mask": cy_mask,
+                            "tissue_fraction": round(tissue_fraction, 6),
+                            "is_in_bounds": 1,
+                            "wsi_level0_spacing_mpp": slide["wsi_level0_spacing_mpp"],
+                            "mask_level0_spacing_mpp": slide["mask_level0_spacing_mpp"],
+                            "context_mpp": context_mpp,
+                            "target_mpp": target_mpp,
+                            "context_fov_um": context_fov_um,
+                            "target_fov_um": target_fov_um,
+                            "targets_per_context": targets_per_context,
+                            "min_tissue_fraction": min_tissue_fraction,
+                            "target_margin_um": target_margin_um,
+                            "target_margin_context_px": target_margin_context_px,
+                            "context_size_px": context_size_px,
+                            "target_size_context_px": target_size_context_px,
+                            "spacing_tolerance": spacing_tolerance,
+                        }
+                    )
+                    slide_anchor_centers_mask.append((cx_mask, cy_mask))
+                    slide_anchor_count += 1
+
+            build_report_rows.append(
+                {
+                    "slide_id": slide["slide_id"],
+                    "status": "ok" if slide_anchor_count > 0 else "failed",
+                    "reason": "" if slide_anchor_count > 0 else "no_valid_anchors",
+                    "anchors": slide_anchor_count,
+                }
+            )
+
+            if args.qc_overlays_dir:
+                qc_path = Path(args.qc_overlays_dir).resolve() / f"{slide['slide_id']}.png"
+                write_qc_overlay(
+                    qc_path=qc_path,
+                    mask_shape=(mask_w, mask_h),
+                    anchors_mask=slide_anchor_centers_mask,
+                    context_size_mask_px=context_size_mask_px,
+                    max_points=args.qc_per_slide,
+                )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
