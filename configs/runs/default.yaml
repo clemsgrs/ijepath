@@ -9,7 +9,7 @@ data:
   pin_mem: true
   num_workers: 16
   seed: 0
-  wsi_backend: openslide
+  wsi_backend: asap  # backend for wholeslidedata reader
 
   # Required run-specific paths.
   # Defaults in defaults.yaml are null and must be set for a real run.

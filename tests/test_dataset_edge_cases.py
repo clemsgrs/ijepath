@@ -36,7 +36,7 @@ def test_reader_level0_border_in_bounds_threshold():
     if not wsi_path.exists():
         pytest.skip("WSI test data is not available")
 
-    reader = WholeSlideDataReaderAdapter(wsi_path=str(wsi_path), backend="openslide")
+    reader = WholeSlideDataReaderAdapter(wsi_path=str(wsi_path), backend="asap")
     size_spacing_px = 512
     spacing_mpp = 1.0
 
@@ -66,7 +66,7 @@ def test_reader_patch_shape_is_stable_at_border():
     if not wsi_path.exists():
         pytest.skip("WSI test data is not available")
 
-    reader = WholeSlideDataReaderAdapter(wsi_path=str(wsi_path), backend="openslide")
+    reader = WholeSlideDataReaderAdapter(wsi_path=str(wsi_path), backend="asap")
     patch = reader.get_patch_by_center_level0(
         center_x_level0=8,
         center_y_level0=8,
@@ -147,7 +147,7 @@ def test_dataset_border_anchor_sample_shapes(tmp_path):
         targets_per_context=4,
         seed=0,
         spacing_tolerance=0.05,
-        backend="openslide",
+        backend="asap",
     )
 
     sample = dataset[0]
@@ -348,7 +348,7 @@ def test_loader_factory_propagates_patch_alignment_toggle(tmp_path):
         min_target_tissue_fraction_step=0.05,
         min_keep=4,
         num_enc_masks=1,
-        backend="openslide",
+        backend="asap",
         align_targets_to_patch_grid=True,
     )
 

@@ -3,6 +3,7 @@ import argparse
 import csv
 import json
 import sys
+import tqdm
 import traceback
 from pathlib import Path
 
@@ -18,7 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", required=True, type=str, help="CSV with slide_id,wsi_path,mask_path")
     parser.add_argument("--output", required=True, type=str, help="Output JSONL path")
     parser.add_argument("--report", type=str, default=None, help="Optional process report CSV path")
-    parser.add_argument("--backend", type=str, default="openslide", help="wholeslidedata backend")
+    parser.add_argument("--backend", type=str, default="asap", help="wholeslidedata backend")
     parser.add_argument("--resume", action="store_true", help="Reuse existing rows from output JSONL")
     return parser.parse_args()
 
@@ -155,19 +156,25 @@ def main() -> int:
     existing = load_existing_rows(output_path) if args.resume else {}
 
     final_rows = []
-    for row in manifest_rows:
-        slide_id = row["slide_id"]
-        if slide_id in existing:
-            final_rows.append(existing[slide_id])
-            continue
-        final_rows.append(
-            build_slide_row(
-                slide_id=slide_id,
-                wsi_path=row["wsi_path"],
-                mask_path=row["mask_path"],
-                backend=args.backend,
+    with tqdm.tqdm(
+        manifest_rows,
+        desc="Processing slides",
+        unit="slide",
+        leave=True,
+    ) as t:
+        for row in t:
+            slide_id = row["slide_id"]
+            if slide_id in existing:
+                final_rows.append(existing[slide_id])
+                continue
+            final_rows.append(
+                build_slide_row(
+                    slide_id=slide_id,
+                    wsi_path=row["wsi_path"],
+                    mask_path=row["mask_path"],
+                    backend=args.backend,
+                )
             )
-        )
 
     write_jsonl(output_path, final_rows)
     write_report(report_path, final_rows)

@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--targets-per-context", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--spacing-tolerance", type=float, default=0.05)
-    parser.add_argument("--wsi-backend", type=str, default="openslide")
+    parser.add_argument("--wsi-backend", type=str, default="asap")
     parser.add_argument("--context-display-size", type=int, default=560)
     parser.add_argument("--target-tile-size", type=int, default=180)
     parser.add_argument("--thumbnail-max-side", type=int, default=1024)

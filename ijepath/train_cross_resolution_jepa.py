@@ -396,7 +396,7 @@ def main(
         min_target_tissue_fraction_floor = float(min_target_tissue_fraction_floor)
     min_target_tissue_fraction_step = float(args["data"].get("min_target_tissue_fraction_step", 0.05))
     align_targets_to_patch_grid = args["data"].get("align_targets_to_patch_grid", False)
-    wsi_backend = str(args["data"].get("wsi_backend", "openslide"))
+    wsi_backend = str(args["data"].get("wsi_backend", "asap"))
     low_anchor_pass_warning_threshold = float(args["data"].get("low_anchor_pass_warning_threshold", 1.0))
     high_anchor_pass_warning_threshold = float(args["data"].get("high_anchor_pass_warning_threshold", 5.0))
     if low_anchor_pass_warning_threshold <= 0:
@@ -527,15 +527,15 @@ def main(
         pred_emb_dim=pred_emb_dim,
         architecture=architecture,
     )
-    target_encoder, _unused_target_predictor = init_model(
+    target_encoder, _ = init_model(
         device=device,
         patch_size=patch_size,
         crop_size=target_input_size_px,
         pred_depth=pred_depth,
         pred_emb_dim=pred_emb_dim,
         architecture=architecture,
+        init_predictor=False,
     )
-    del _unused_target_predictor
     matched_params, skipped_params = copy_matching_state_dict_params(
         source=encoder,
         target=target_encoder,

@@ -28,6 +28,7 @@ def test_training_step_smoke():
         crop_size=target_input_size_px,
         pred_depth=3,
         pred_emb_dim=192,
+        init_predictor=False,
     )
     for p in target_encoder.parameters():
         p.requires_grad = False

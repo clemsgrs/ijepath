@@ -50,7 +50,7 @@ class CrossResolutionWSIDataset(Dataset):
         insufficient_target_policy: str = "skip_anchor",
         min_target_tissue_fraction_floor: float | None = None,
         min_target_tissue_fraction_step: float = 0.05,
-        backend: str = "openslide",
+        backend: str = "asap",
         align_targets_to_patch_grid: bool = False,
     ) -> None:
         self.anchor_catalog_csv = str(anchor_catalog_csv)

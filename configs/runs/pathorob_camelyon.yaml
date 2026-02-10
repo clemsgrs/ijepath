@@ -1,7 +1,10 @@
 data:
-  slide_manifest_csv: data/tcga-prad/manifests/tcga_prad_slides_with_tissue_masks.csv
-  slide_metadata_index_jsonl: data/tcga-prad/indexes/slide_metadata_index.jsonl
-  anchor_catalog_csv: data/tcga-prad/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv
+  # slide_manifest_csv: data/tcga-prad/manifests/tcga_prad_slides_with_tissue_masks.csv
+  # slide_metadata_index_jsonl: data/tcga-prad/indexes/slide_metadata_index.jsonl
+  # anchor_catalog_csv: data/tcga-prad/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv
+  slide_manifest_csv: /data/pathology/projects/clement/discern/multi-center-prostate.csv
+  slide_metadata_index_jsonl: data/3-center-prostate/indexes/slide_metadata_index.jsonl
+  anchor_catalog_csv: data/3-center-prostate/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv
   batch_size_per_gpu: 32
   num_workers: 16
 
@@ -14,7 +17,7 @@ meta:
   load_checkpoint: false
 
 optimization:
-  total_images_budget: 100000  # Total global images seen for this run.
+  total_images_budget: 1000000  # Total global images seen for this run.
   warmup: 0.1  # Warmup fraction of total_steps (warmup_steps=int(warmup * total_steps)).
   lr: 0.0002
   start_lr: 0.00002
@@ -41,12 +44,12 @@ tuning:
         normalize: imagenet
       datasets:
         camelyon:
-          enable: false
+          enable: true
           manifest_csv: ${tuning.data_dir}/pathorob/camelyon/benchmark.csv
           id_centers: ["RUMC", "UMCU"]
           ood_centers: ["CWZ", "RST", "LPON"]
         camelyon_tiny:
-          enable: true
+          enable: false
           manifest_csv: ${tuning.data_dir}/pathorob/camelyon_tiny/benchmark.csv
           id_centers: ["RUMC", "UMCU"]
           ood_centers: ["CWZ", "RST", "LPON"]
@@ -68,7 +71,7 @@ tuning:
     enable: false
     selection:
       plugin: pathorob
-      dataset: camelyon_tiny
+      dataset: camelyon
       metric: apd_avg
     patience_evals: 5  # Stop after this many non-improving tuning evaluations.
     min_evals: 3  # Minimum number of evaluations before stop condition is allowed.

@@ -68,17 +68,19 @@ def init_model(
     architecture='vit_base',
     crop_size=224,
     pred_depth=6,
-    pred_emb_dim=384
+    pred_emb_dim=384,
+    init_predictor: bool = True,
 ):
     encoder = vit.__dict__[architecture](
         img_size=[crop_size],
         patch_size=patch_size)
-    predictor = vit.__dict__['vit_predictor'](
-        num_patches=encoder.patch_embed.num_patches,
-        embed_dim=encoder.embed_dim,
-        predictor_embed_dim=pred_emb_dim,
-        depth=pred_depth,
-        num_heads=encoder.num_heads)
+    if init_predictor:
+        predictor = vit.__dict__['vit_predictor'](
+            num_patches=encoder.patch_embed.num_patches,
+            embed_dim=encoder.embed_dim,
+            predictor_embed_dim=pred_emb_dim,
+            depth=pred_depth,
+            num_heads=encoder.num_heads)
 
     def init_weights(m):
         if isinstance(m, torch.nn.Linear):
@@ -92,22 +94,29 @@ def init_model(
     for m in encoder.modules():
         init_weights(m)
 
-    for m in predictor.modules():
-        init_weights(m)
+    if init_predictor:
+        for m in predictor.modules():
+            init_weights(m)
 
     encoder.to(device)
-    predictor.to(device)
     encoder_params = sum(int(p.numel()) for p in encoder.parameters())
-    predictor_params = sum(int(p.numel()) for p in predictor.parameters())
-    logger.info(
-        "Initialized model:\n"
+    if init_predictor:
+        predictor.to(device)
+        predictor_params = sum(int(p.numel()) for p in predictor.parameters())
+
+    info_msg = (
+        f"Initialized model:\n"
         f" - architecture={architecture}\n"
         f" - patch_size={int(patch_size)}\n"
         f" - crop_size={int(crop_size)}\n"
-        f" - encoder_params={encoder_params}\n"
-        f" - predictor_params={predictor_params}"
-    )
-    return encoder, predictor
+        f" - encoder_params={encoder_params:,}")
+
+    if init_predictor:
+        info_msg += f"\n - predictor_params={predictor_params:,}"
+    logger.info(info_msg)
+    if init_predictor:
+        return encoder, predictor
+    return encoder, None
 
 
 def init_opt(
