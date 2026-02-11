@@ -46,11 +46,24 @@ parser.add_argument(
     '--time', type=int, default=4300,
     help='time in minutes to run job')
 parser.add_argument(
+    '--master-port', type=int, default=None,
+    help='shared rendezvous port for multi-process SLURM launches')
+parser.add_argument(
     'opts',
     nargs=argparse.REMAINDER,
     default=None,
     help='override config options with dotlist syntax, e.g. data.batch_size_per_gpu=8',
 )
+
+
+def _validate_master_port(value: str | int) -> int:
+    try:
+        port = int(str(value).strip())
+    except Exception as exc:
+        raise ValueError(f"MASTER_PORT must be an integer, got {value!r}") from exc
+    if port < 1 or port > 65535:
+        raise ValueError(f"MASTER_PORT must be in [1, 65535], got {port}")
+    return int(port)
 
 
 class Trainer:
@@ -61,14 +74,33 @@ class Trainer:
         run_config=None,
         opts=None,
         load_model=None,
+        master_port=None,
     ):
         self.profile_config = profile_config
         self.run_config = run_config
         self.opts = list(opts or [])
         self.load_model = load_model
+        self.master_port = master_port
 
     def __call__(self):
         load_model = self.load_model
+        if self.master_port is not None:
+            os.environ["MASTER_PORT"] = str(_validate_master_port(self.master_port))
+        env_master_port = os.environ.get("MASTER_PORT", "").strip()
+        if env_master_port:
+            os.environ["MASTER_PORT"] = str(_validate_master_port(env_master_port))
+
+        slurm_ntasks_raw = os.environ.get("SLURM_NTASKS", "1")
+        try:
+            slurm_ntasks = int(slurm_ntasks_raw)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid SLURM_NTASKS value: {slurm_ntasks_raw!r}") from exc
+        if slurm_ntasks > 1 and not os.environ.get("MASTER_PORT", "").strip():
+            raise SystemExit(
+                "MASTER_PORT is required for multi-process SLURM launches. "
+                "Set MASTER_PORT in the environment or pass --master-port."
+            )
+
         setup_logging(level=logging.INFO)
         logger.info(
             f"called-params default={DEFAULT_CONFIG_PATH} "
@@ -96,6 +128,7 @@ class Trainer:
             self.run_config,
             self.opts,
             True,
+            self.master_port,
         )
         return submitit.helpers.DelayedSubmission(fb_trainer,)
 
@@ -125,6 +158,7 @@ def launch():
             profile_config=args.profile_config,
             run_config=args.run_config,
             opts=args.opts,
+            master_port=args.master_port,
         )
         jobs.append(executor.submit(fb_trainer,))
 

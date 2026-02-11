@@ -10,8 +10,10 @@ import argparse
 import multiprocessing as mp
 
 import os
+import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from ijepath.utils.distributed import init_distributed
@@ -40,6 +42,16 @@ parser.add_argument(
     default=None,
     help='override config options with dotlist syntax, e.g. data.batch_size_per_gpu=8',
 )
+
+
+def _parse_master_port(value: str | int, *, source: str) -> int:
+    try:
+        port = int(str(value).strip())
+    except Exception as exc:
+        raise ValueError(f"{source} must be an integer, got {value!r}") from exc
+    if port < 1 or port > 65535:
+        raise ValueError(f"{source} must be in [1, 65535], got {port}")
+    return int(port)
 
 
 def _has_opt(opts: list[str] | None, prefix: str) -> bool:
@@ -127,12 +139,112 @@ def _discover_visible_devices():
     return [str(i) for i in range(torch.cuda.device_count())]
 
 
-def process_main(rank, profile_config, run_config, opts, world_size, visible_devices):
+def _resolve_master_port(world_size: int) -> int | None:
+    if int(world_size) <= 1:
+        return None
+    env_port = os.environ.get("MASTER_PORT", "").strip()
+    if env_port:
+        return _parse_master_port(env_port, source="MASTER_PORT")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _resolve_master_addr(world_size: int) -> str | None:
+    if int(world_size) <= 1:
+        return None
+    return "127.0.0.1"
+
+
+def _join_process(process: mp.Process, timeout: float | None = None) -> None:
+    if timeout is None:
+        process.join()
+        return
+    try:
+        process.join(timeout=timeout)
+    except TypeError:
+        process.join()
+
+
+def _is_process_running(process: mp.Process) -> bool:
+    exitcode = getattr(process, "exitcode", None)
+    if exitcode is not None:
+        return False
+    is_alive = getattr(process, "is_alive", None)
+    if callable(is_alive):
+        try:
+            return bool(is_alive())
+        except Exception:
+            return True
+    return True
+
+
+def _cleanup_remaining_workers(
+    workers: list[tuple[int, str, mp.Process]],
+    *,
+    join_timeout_s: float = 3.0,
+) -> tuple[int, int]:
+    terminated = 0
+    killed = 0
+
+    for _rank, _device, process in workers:
+        if not _is_process_running(process):
+            continue
+        terminate = getattr(process, "terminate", None)
+        if callable(terminate):
+            try:
+                terminate()
+                terminated += 1
+            except Exception:
+                pass
+
+    deadline = time.time() + float(join_timeout_s)
+    for _rank, _device, process in workers:
+        if not _is_process_running(process):
+            continue
+        timeout = max(0.0, deadline - time.time())
+        try:
+            _join_process(process, timeout=timeout)
+        except Exception:
+            pass
+
+    for _rank, _device, process in workers:
+        if not _is_process_running(process):
+            continue
+        kill = getattr(process, "kill", None)
+        if callable(kill):
+            try:
+                kill()
+                killed += 1
+            except Exception:
+                pass
+        try:
+            _join_process(process, timeout=0.2)
+        except Exception:
+            pass
+
+    return terminated, killed
+
+
+def process_main(
+    rank,
+    profile_config,
+    run_config,
+    opts,
+    world_size,
+    visible_devices,
+    master_addr,
+    master_port,
+):
     device_token = visible_devices[rank]
     if device_token != "cpu":
         os.environ['CUDA_VISIBLE_DEVICES'] = device_token
     else:
         os.environ.pop('CUDA_VISIBLE_DEVICES', None)
+    if master_addr:
+        os.environ["MASTER_ADDR"] = str(master_addr)
+    if master_port is not None:
+        os.environ["MASTER_PORT"] = str(master_port)
 
     import logging
 
@@ -155,10 +267,15 @@ def process_main(rank, profile_config, run_config, opts, world_size, visible_dev
         f"profile={profile_config} run={run_config})"
     )
 
-    world_size, rank = init_distributed(rank_and_world_size=(rank, world_size))
+    world_size, rank = init_distributed(
+        rank_and_world_size=(rank, world_size),
+        master_addr=master_addr,
+        port=master_port,
+    )
     logger.info(
         f"Distributed context initialized: rank={rank} "
-        f"world_size={world_size} device={device_token}"
+        f"world_size={world_size} device={device_token} "
+        f"master_addr={master_addr} master_port={master_port}"
     )
     app_main(args=params, distributed_state=(world_size, rank))
 
@@ -171,35 +288,64 @@ def launch_worker_processes(
     visible_devices: list[str],
 ) -> None:
     world_size = len(visible_devices)
+    master_addr = _resolve_master_addr(world_size)
+    master_port = _resolve_master_port(world_size)
     workers: list[tuple[int, str, mp.Process]] = []
+    try:
+        for rank in range(world_size):
+            process = mp.Process(
+                target=process_main,
+                args=(
+                    rank,
+                    profile_config,
+                    run_config,
+                    opts,
+                    world_size,
+                    visible_devices,
+                    master_addr,
+                    master_port,
+                ),
+            )
+            process.start()
+            workers.append((rank, visible_devices[rank], process))
 
-    for rank in range(world_size):
-        process = mp.Process(
-            target=process_main,
-            args=(
-                rank,
-                profile_config,
-                run_config,
-                opts,
-                world_size,
-                visible_devices,
-            ),
-        )
-        process.start()
-        workers.append((rank, visible_devices[rank], process))
+        failed_workers: list[tuple[int, str, int | None]] = []
+        pending = list(workers)
+        while pending:
+            completed: list[tuple[int, str, mp.Process]] = []
+            for rank, device, process in pending:
+                _join_process(process, timeout=0.2)
+                if process.exitcode is None:
+                    continue
+                completed.append((rank, device, process))
+                if process.exitcode != 0:
+                    failed_workers.append((rank, device, process.exitcode))
 
-    failed_workers: list[tuple[int, str, int | None]] = []
-    for rank, device, process in workers:
-        process.join()
-        if process.exitcode != 0:
-            failed_workers.append((rank, device, process.exitcode))
+            if completed:
+                pending = [w for w in pending if w not in completed]
 
-    if failed_workers:
-        failure_summary = ", ".join(
-            f"(rank={rank}, device={device}, exitcode={exitcode})"
-            for rank, device, exitcode in failed_workers
-        )
-        raise SystemExit(f"Worker process failure(s): {failure_summary}")
+            if failed_workers:
+                terminated, killed = _cleanup_remaining_workers(pending)
+                failure_summary = ", ".join(
+                    f"(rank={rank}, device={device}, exitcode={exitcode})"
+                    for rank, device, exitcode in failed_workers
+                )
+                raise SystemExit(
+                    "Worker process failure(s): "
+                    f"{failure_summary}. cleanup(terminated={terminated}, killed={killed})"
+                )
+
+            if pending and not completed:
+                time.sleep(0.05)
+    except KeyboardInterrupt as exc:
+        terminated, killed = _cleanup_remaining_workers(workers)
+        raise SystemExit(
+            "Interrupted while waiting for worker processes. "
+            f"cleanup(terminated={terminated}, killed={killed})"
+        ) from exc
+    except Exception:
+        _cleanup_remaining_workers(workers)
+        raise
 
 
 if __name__ == '__main__':

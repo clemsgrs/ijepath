@@ -77,7 +77,21 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
   --run-config configs/runs/tcga_prad_smoke.yaml \
   --manifest-csv ${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
-  --pipeline-output-folder ${DATA_ROOT}/outputs/full-pipeline
+  --output-folder ${DATA_ROOT}/outputs/full-pipeline
+
+# 5) Single-machine multi-GPU launch (2 GPUs example)
+CUDA_VISIBLE_DEVICES=0,1 python main.py \
+  --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
+  --run-config configs/runs/tcga_prad_smoke.yaml \
+  data.slide_manifest_csv=${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
+  data.slide_metadata_parquet=${DATA_ROOT}/indexes/slide_metadata.parquet \
+  data.anchor_catalog_manifest=${DATA_ROOT}/indexes/anchor_catalog_manifest.json
+
+# Rendezvous notes:
+# - main.py auto-selects a free local MASTER_PORT for multi-GPU runs when MASTER_PORT is unset.
+# - Set MASTER_PORT explicitly to override auto-selection.
+# - For non-main.py multi-process launches (e.g. SLURM), set MASTER_PORT
+#   or pass --master-port to main_distributed.py.
 
 # defaults config is implicit: configs/defaults.yaml
 

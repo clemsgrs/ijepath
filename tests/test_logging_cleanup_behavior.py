@@ -1,5 +1,6 @@
 import main as main_entry
 import torch
+import pytest
 from pathlib import Path
 
 
@@ -15,7 +16,7 @@ def test_process_main_defers_config_logging_to_trainer(monkeypatch):
 
     monkeypatch.setattr(main_entry, "setup_logging", lambda **_: _FakeLogger())
     monkeypatch.setattr(main_entry, "load_training_config", lambda **_: {"ok": True})
-    monkeypatch.setattr(main_entry, "init_distributed", lambda rank_and_world_size: (1, 0))
+    monkeypatch.setattr(main_entry, "init_distributed", lambda **_kwargs: (1, 0))
 
     def _fake_app_main(*, args, **_kwargs):
         captured_app_args["args"] = args
@@ -29,6 +30,8 @@ def test_process_main_defers_config_logging_to_trainer(monkeypatch):
         opts=["x=1"],
         world_size=1,
         visible_devices=["cpu"],
+        master_addr=None,
+        master_port=None,
     )
 
     assert captured_app_args["args"] == {"ok": True}
@@ -223,10 +226,12 @@ def test_launch_worker_processes_waits_for_all_children(monkeypatch):
         def start(self):
             starts.append(self._args)
 
-        def join(self):
+        def join(self, timeout=None):
             joins.append(self._args[0])
 
     monkeypatch.setattr(main_entry.mp, "Process", _FakeProcess)
+    monkeypatch.setattr(main_entry, "_resolve_master_addr", lambda world_size: "127.0.0.1")
+    monkeypatch.setattr(main_entry, "_resolve_master_port", lambda world_size: 29456)
 
     main_entry.launch_worker_processes(
         profile_config="profile.yaml",
@@ -236,8 +241,10 @@ def test_launch_worker_processes_waits_for_all_children(monkeypatch):
     )
 
     assert len(starts) == 2
-    assert len(joins) == 2
+    assert len(joins) >= 2
     assert set(joins) == {0, 1}
+    assert all(args[6] == "127.0.0.1" for args in starts)
+    assert all(args[7] == 29456 for args in starts)
 
 
 def test_launch_worker_processes_raises_on_failed_child(monkeypatch):
@@ -250,10 +257,12 @@ def test_launch_worker_processes_raises_on_failed_child(monkeypatch):
         def start(self):
             return None
 
-        def join(self):
+        def join(self, timeout=None):
             return None
 
     monkeypatch.setattr(main_entry.mp, "Process", _FakeProcess)
+    monkeypatch.setattr(main_entry, "_resolve_master_addr", lambda world_size: "127.0.0.1")
+    monkeypatch.setattr(main_entry, "_resolve_master_port", lambda world_size: 29501)
 
     try:
         main_entry.launch_worker_processes(
@@ -265,6 +274,58 @@ def test_launch_worker_processes_raises_on_failed_child(monkeypatch):
         raise AssertionError("Expected SystemExit when a worker exits with nonzero status")
     except SystemExit as exc:
         assert "rank=1" in str(exc)
+
+
+def test_resolve_master_port_honors_env_override(monkeypatch):
+    monkeypatch.setenv("MASTER_PORT", "29651")
+    assert main_entry._resolve_master_port(world_size=2) == 29651
+
+
+def test_resolve_master_port_rejects_invalid_env(monkeypatch):
+    monkeypatch.setenv("MASTER_PORT", "bad-port")
+    with pytest.raises(ValueError, match="MASTER_PORT"):
+        main_entry._resolve_master_port(world_size=2)
+
+
+def test_launch_worker_processes_cleans_up_on_keyboard_interrupt(monkeypatch):
+    lifecycle: dict[str, int] = {"terminated": 0, "killed": 0}
+
+    class _FakeProcess:
+        def __init__(self, target, args):
+            self._target = target
+            self._args = args
+            self.exitcode = None
+
+        def start(self):
+            return None
+
+        def join(self, timeout=None):
+            raise KeyboardInterrupt()
+
+        def terminate(self):
+            lifecycle["terminated"] += 1
+            self.exitcode = -15
+
+        def kill(self):
+            lifecycle["killed"] += 1
+            self.exitcode = -9
+
+        def is_alive(self):
+            return self.exitcode is None
+
+    monkeypatch.setattr(main_entry.mp, "Process", _FakeProcess)
+    monkeypatch.setattr(main_entry, "_resolve_master_addr", lambda world_size: "127.0.0.1")
+    monkeypatch.setattr(main_entry, "_resolve_master_port", lambda world_size: 29522)
+
+    with pytest.raises(SystemExit, match="Interrupted while waiting for worker processes"):
+        main_entry.launch_worker_processes(
+            profile_config="profile.yaml",
+            run_config="run.yaml",
+            opts=[],
+            visible_devices=["cpu", "1"],
+        )
+
+    assert lifecycle["terminated"] >= 1
 
 
 def test_has_opt_detects_dotlist_prefix():
