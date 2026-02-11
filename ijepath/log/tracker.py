@@ -77,6 +77,11 @@ def update_log_dict(
         log_dict[metric_name] = value
 
 
+def log_dict(log_dict: Mapping[str, Any]) -> None:
+    wb = _require_wandb()
+    wb.log(dict(log_dict))
+
+
 def log_images_seen_dict(log_dict: Mapping[str, Any], images_seen: int) -> None:
     wb = _require_wandb()
     wb.log(dict(log_dict), step=int(images_seen))

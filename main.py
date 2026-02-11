@@ -10,6 +10,7 @@ import argparse
 import multiprocessing as mp
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -56,6 +57,12 @@ def _parse_master_port(value: str | int, *, source: str) -> int:
 
 def _has_opt(opts: list[str] | None, prefix: str) -> bool:
     return any(str(x).startswith(prefix) for x in list(opts or []))
+
+
+def _replace_opt(opts: list[str] | None, prefix: str, value: str) -> list[str]:
+    out = [str(x) for x in list(opts or []) if not str(x).startswith(prefix)]
+    out.append(value)
+    return out
 
 
 def _run_checked(cmd: list[str]) -> None:
@@ -137,6 +144,45 @@ def _discover_visible_devices():
             return visible
 
     return [str(i) for i in range(torch.cuda.device_count())]
+
+
+def _resolve_reserved_tuning_device_token(
+    *,
+    profile_config: str,
+    run_config: str,
+    opts: list[str] | None,
+    visible_devices: list[str],
+) -> str | None:
+    params = load_training_config(
+        default_config=DEFAULT_CONFIG_PATH,
+        profile_config=profile_config,
+        run_config=run_config,
+        opts=opts,
+    )
+    tuning_cfg = dict(params.get("tuning", {}) or {})
+    if not bool(tuning_cfg.get("enable", False)):
+        return None
+
+    execution_cfg = dict(tuning_cfg.get("execution", {}) or {})
+    device = str(execution_cfg.get("device", "auto")).strip().lower()
+    if device == "auto":
+        if len(visible_devices) < 2:
+            raise SystemExit(
+                "tuning.execution.device=auto requires at least 2 visible GPUs "
+                "(one reserved for tuning)"
+            )
+        token = str(visible_devices[-1])
+    else:
+        match = re.fullmatch(r"cuda:(\d+)", device)
+        if match is None:
+            raise SystemExit("tuning.execution.device must be 'auto' or cuda:<id> for dedicated GPU tuning")
+        token = match.group(1)
+    if token not in visible_devices:
+        raise SystemExit(
+            "Configured tuning.execution.device is not visible in CUDA_VISIBLE_DEVICES: "
+            f"requested={token} visible={visible_devices}"
+        )
+    return token
 
 
 def _resolve_master_port(world_size: int) -> int | None:
@@ -235,10 +281,18 @@ def process_main(
     visible_devices,
     master_addr,
     master_port,
+    tuning_device_token=None,
 ):
     device_token = visible_devices[rank]
+    rank_opts = list(opts or [])
     if device_token != "cpu":
-        os.environ['CUDA_VISIBLE_DEVICES'] = device_token
+        if rank == 0 and tuning_device_token is not None:
+            if str(tuning_device_token) == str(device_token):
+                raise SystemExit("Dedicated tuning GPU conflicts with rank-0 training GPU assignment")
+            os.environ['CUDA_VISIBLE_DEVICES'] = f"{device_token},{tuning_device_token}"
+            rank_opts = _replace_opt(rank_opts, "tuning.execution.device=", "tuning.execution.device=cuda:1")
+        else:
+            os.environ['CUDA_VISIBLE_DEVICES'] = device_token
     else:
         os.environ.pop('CUDA_VISIBLE_DEVICES', None)
     if master_addr:
@@ -252,7 +306,7 @@ def process_main(
 
     logger.info(
         f"called-params default={DEFAULT_CONFIG_PATH} "
-        f"profile={profile_config} run={run_config} opts={opts}"
+        f"profile={profile_config} run={run_config} opts={rank_opts}"
     )
 
     # -- load script params
@@ -260,7 +314,7 @@ def process_main(
         default_config=DEFAULT_CONFIG_PATH,
         profile_config=profile_config,
         run_config=run_config,
-        opts=opts,
+        opts=rank_opts,
     )
     logger.info(
         f"loaded layered config (default={DEFAULT_CONFIG_PATH} "
@@ -286,6 +340,7 @@ def launch_worker_processes(
     run_config: str,
     opts: list[str] | None,
     visible_devices: list[str],
+    tuning_device_token: str | None = None,
 ) -> None:
     world_size = len(visible_devices)
     master_addr = _resolve_master_addr(world_size)
@@ -304,6 +359,7 @@ def launch_worker_processes(
                     visible_devices,
                     master_addr,
                     master_port,
+                    tuning_device_token,
                 ),
             )
             process.start()
@@ -377,11 +433,24 @@ if __name__ == '__main__':
             effective_opts.append(f"logging.folder={artifacts['training_output_folder']}")
 
     visible_devices = _discover_visible_devices()
+    reserved_tuning_device = _resolve_reserved_tuning_device_token(
+        profile_config=args.profile_config,
+        run_config=args.run_config,
+        opts=effective_opts,
+        visible_devices=visible_devices,
+    )
+    training_visible_devices = list(visible_devices)
+    if reserved_tuning_device is not None:
+        training_visible_devices = [d for d in visible_devices if str(d) != str(reserved_tuning_device)]
+        if not training_visible_devices:
+            raise SystemExit("No training GPUs remain after reserving dedicated tuning GPU")
+
     mp.set_start_method('spawn')
 
     launch_worker_processes(
         profile_config=args.profile_config,
         run_config=args.run_config,
         opts=effective_opts,
-        visible_devices=visible_devices,
+        visible_devices=training_visible_devices,
+        tuning_device_token=reserved_tuning_device,
     )

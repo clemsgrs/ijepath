@@ -125,14 +125,26 @@ Runtime logs emit these diagnostics at startup with warnings and suggested knobs
 ```bash
 DATA_ROOT=/path/to/your-dataset
 
-CUDA_VISIBLE_DEVICES=0 python main.py \
+CUDA_VISIBLE_DEVICES=0,1 python main.py \
   --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
-  --run-config configs/runs/pathorob_camelyon_image_budget.yaml \
+  --run-config configs/runs/pathorob_camelyon.yaml \
   data.slide_manifest_csv=${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
   data.slide_metadata_parquet=${DATA_ROOT}/indexes/slide_metadata.parquet \
   data.anchor_catalog_manifest=${DATA_ROOT}/indexes/anchor_catalog_manifest.json \
+  tuning.execution.device=auto \
   tuning.plugins[0].datasets.camelyon.manifest_csv=${DATA_ROOT}/pathorob/camelyon_manifest.csv
 ```
+
+Async tuning behavior and key knobs:
+- `tuning.execution.mode=async`: evaluator runs out-of-band; training step loop does not block on tuning execution.
+- `tuning.execution.device=auto`: reserves one visible GPU for tuning automatically (`cuda:<id>` also supported).
+- `tuning.execution.max_pending_jobs`: queue cap for pending eval snapshots.
+- `tuning.execution.coalesce_policy=newest`: stale queued evals are dropped first under backlog.
+- `tuning.execution.poll_every_steps`: how often training polls completed eval results.
+- `tuning.execution.keep_last_n_snapshots`: limits on-disk teacher snapshot retention.
+- `tuning.plugins[*].feature_num_workers`, `feature_persistent_workers`, `feature_prefetch_factor`: feature extraction loader throughput controls.
+- `tuning.plugins[*].ri/apd/clustering.every_n_evals`: cadence controls for heavy metrics.
+- Async `wandb` tune logging is keyed to `tune/eval_images_seen` (plus `train/images_seen_at_log`) so curves stay aligned to evaluation image budget.
 
 Checkpoint semantics:
 - Always keeps `<write_tag>-latest.pth.tar`

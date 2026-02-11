@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+import re
 from typing import Any
 
 from omegaconf import OmegaConf
@@ -248,6 +249,31 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
     if not bool(tuning_cfg.get("enable", False)):
         return
 
+    execution_cfg = dict(tuning_cfg.get("execution", {}) or {})
+    execution_mode = str(execution_cfg.get("mode", "")).strip().lower()
+    if execution_mode != "async":
+        raise ValueError("tuning.execution.mode must be 'async' when tuning.enable=true")
+
+    execution_device = str(execution_cfg.get("device", "")).strip().lower()
+    if execution_device != "auto" and re.fullmatch(r"cuda:\d+", execution_device) is None:
+        raise ValueError("tuning.execution.device must be 'auto' or match 'cuda:<id>' when tuning.enable=true")
+
+    max_pending_jobs = int(execution_cfg.get("max_pending_jobs", 2))
+    if max_pending_jobs <= 0:
+        raise ValueError("tuning.execution.max_pending_jobs must be > 0")
+
+    coalesce_policy = str(execution_cfg.get("coalesce_policy", "newest")).strip().lower()
+    if coalesce_policy != "newest":
+        raise ValueError("tuning.execution.coalesce_policy must be 'newest'")
+
+    poll_every_steps = int(execution_cfg.get("poll_every_steps", 10))
+    if poll_every_steps <= 0:
+        raise ValueError("tuning.execution.poll_every_steps must be > 0")
+
+    keep_last_n_snapshots = int(execution_cfg.get("keep_last_n_snapshots", 2))
+    if keep_last_n_snapshots < 0:
+        raise ValueError("tuning.execution.keep_last_n_snapshots must be >= 0")
+
     plugins = list(tuning_cfg.get("plugins", []) or [])
     enabled_plugins = [dict(p) for p in plugins if bool(dict(p).get("enable", True))]
 
@@ -266,6 +292,26 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
                 "Use tuning.early_stopping.selection.{plugin,dataset,metric} instead."
             )
         if ptype == "pathorob":
+            feature_num_workers = int(plugin.get("feature_num_workers", plugin.get("num_workers", 4)))
+            if feature_num_workers < 0:
+                raise ValueError("tuning.plugins.pathorob.feature_num_workers must be >= 0")
+            feature_prefetch_factor = int(plugin.get("feature_prefetch_factor", 4))
+            if feature_prefetch_factor <= 0:
+                raise ValueError("tuning.plugins.pathorob.feature_prefetch_factor must be > 0")
+
+            metric_default_every = {
+                "ri": 1,
+                "apd": 5,
+                "clustering": 5,
+            }
+            for metric_section, default_every in metric_default_every.items():
+                metric_cfg = dict(plugin.get(metric_section, {}) or {})
+                every_n = int(metric_cfg.get("every_n_evals", default_every))
+                if every_n <= 0:
+                    raise ValueError(
+                        f"tuning.plugins.pathorob.{metric_section}.every_n_evals must be > 0"
+                    )
+
             apd_cfg = dict(plugin.get("apd", {}) or {})
             mode = str(apd_cfg.get("mode", "paper"))
             if mode == "paper":
@@ -318,6 +364,23 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
                 f"tuning.early_stopping.selection.dataset='{dataset_name}' must reference an enabled "
                 f"{plugin_name} dataset entry"
             )
+        metric_to_section = {
+            "ri": "ri",
+            "apd_id": "apd",
+            "apd_ood": "apd",
+            "apd_avg": "apd",
+            "clustering_score": "clustering",
+        }
+        selected_section = metric_to_section.get(metric_name)
+        if selected_section is not None:
+            section_cfg = dict(selected_plugin.get(selected_section, {}) or {})
+            default_every = 1 if selected_section == "ri" else 5
+            section_every_n = int(section_cfg.get("every_n_evals", default_every))
+            if section_every_n != 1:
+                raise ValueError(
+                    "tuning.early_stopping.selection.metric cadence must run every eval "
+                    f"(set tuning.plugins.pathorob.{selected_section}.every_n_evals=1)"
+                )
 
     metric_modes = _EARLY_STOPPING_METRIC_MODES.get(plugin_name, {})
     if metric_name not in metric_modes:

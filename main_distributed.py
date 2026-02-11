@@ -8,6 +8,7 @@
 import argparse
 import logging
 import os
+import re
 
 import submitit
 
@@ -64,6 +65,40 @@ def _validate_master_port(value: str | int) -> int:
     if port < 1 or port > 65535:
         raise ValueError(f"MASTER_PORT must be in [1, 65535], got {port}")
     return int(port)
+
+
+def _resolve_distributed_gpu_request(
+    *,
+    profile_config: str,
+    run_config: str,
+    opts: list[str] | None,
+    tasks_per_node: int,
+) -> int:
+    params = load_training_config(
+        default_config=DEFAULT_CONFIG_PATH,
+        profile_config=profile_config,
+        run_config=run_config,
+        opts=opts,
+    )
+    tuning_cfg = dict(params.get("tuning", {}) or {})
+    if not bool(tuning_cfg.get("enable", False)):
+        return int(tasks_per_node)
+
+    execution_cfg = dict(tuning_cfg.get("execution", {}) or {})
+    device = str(execution_cfg.get("device", "auto")).strip().lower()
+    if device == "auto":
+        tuning_gpu_idx = int(tasks_per_node)
+    else:
+        match = re.fullmatch(r"cuda:(\d+)", device)
+        if match is None:
+            raise SystemExit("tuning.execution.device must be 'auto' or cuda:<id> for dedicated GPU tuning")
+        tuning_gpu_idx = int(match.group(1))
+    if tuning_gpu_idx < int(tasks_per_node):
+        raise SystemExit(
+            "Dedicated tuning GPU conflicts with training ranks. "
+            "Choose tuning.execution.device with gpu index >= tasks-per-node."
+        )
+    return int(tasks_per_node) + 1
 
 
 class Trainer:
@@ -134,6 +169,33 @@ class Trainer:
 
 
 def launch():
+    if not (args.profile_config and args.run_config):
+        raise SystemExit(
+            "Provide --profile-config <...> and --run-config <...>. "
+            f"Defaults are always loaded from {DEFAULT_CONFIG_PATH}."
+        )
+
+    gpus_per_node = _resolve_distributed_gpu_request(
+        profile_config=args.profile_config,
+        run_config=args.run_config,
+        opts=args.opts,
+        tasks_per_node=int(args.tasks_per_node),
+    )
+    launch_opts = list(args.opts or [])
+    params_for_launch = load_training_config(
+        default_config=DEFAULT_CONFIG_PATH,
+        profile_config=args.profile_config,
+        run_config=args.run_config,
+        opts=launch_opts,
+    )
+    tuning_cfg = dict(params_for_launch.get("tuning", {}) or {})
+    if bool(tuning_cfg.get("enable", False)):
+        execution_cfg = dict(tuning_cfg.get("execution", {}) or {})
+        device = str(execution_cfg.get("device", "auto")).strip().lower()
+        if device == "auto":
+            launch_opts = [x for x in launch_opts if not str(x).startswith("tuning.execution.device=")]
+            launch_opts.append(f"tuning.execution.device=cuda:{int(args.tasks_per_node)}")
+
     executor = submitit.AutoExecutor(
         folder=os.path.join(args.folder, 'job_%j'),
         slurm_max_num_timeout=20)
@@ -144,20 +206,14 @@ def launch():
         nodes=args.nodes,
         tasks_per_node=args.tasks_per_node,
         cpus_per_task=10,
-        gpus_per_node=args.tasks_per_node)
-
-    if not (args.profile_config and args.run_config):
-        raise SystemExit(
-            "Provide --profile-config <...> and --run-config <...>. "
-            f"Defaults are always loaded from {DEFAULT_CONFIG_PATH}."
-        )
+        gpus_per_node=gpus_per_node)
 
     jobs = []
     with executor.batch():
         fb_trainer = Trainer(
             profile_config=args.profile_config,
             run_config=args.run_config,
-            opts=args.opts,
+            opts=launch_opts,
             master_port=args.master_port,
         )
         jobs.append(executor.submit(fb_trainer,))

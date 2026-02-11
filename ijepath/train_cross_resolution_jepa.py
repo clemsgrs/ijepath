@@ -23,6 +23,7 @@ from ijepath.helper import init_model, init_opt, load_checkpoint
 from ijepath.log.tracker import (
     finish_wandb,
     initialize_wandb,
+    log_dict,
     log_images_seen_dict,
     save_run_config_to_wandb,
     update_log_dict,
@@ -735,16 +736,32 @@ def main(
         )
 
     tuner = None
+    tuning_runtime = None
     early_stopper = None
     early_stop_cfg = dict(tuning_cfg.get("early_stopping", {}) or {})
+    tuning_execution_cfg = dict(tuning_cfg.get("execution", {}) or {})
+    tune_poll_every_steps = int(tuning_execution_cfg.get("poll_every_steps", 10))
+    pending_eval_snapshots: dict[int, dict] = {}
+    tuning_output_dir = Path(folder) / "tuning"
+    tuning_snapshots_dir = tuning_output_dir / "snapshots"
+    tuning_snapshots_dir.mkdir(parents=True, exist_ok=True)
+
     if tuning_enabled_cfg and rank == 0:
+        from ijepath.eval.async_runtime import AsyncTuningRuntime
         from ijepath.eval.tuner import Tuner
 
+        teacher_backbone = target_encoder.module if hasattr(target_encoder, "module") else target_encoder
         tuner = Tuner(
             cfg=tuning_cfg,
             device=device,
-            output_dir=Path(folder) / "tuning",
+            output_dir=tuning_output_dir,
         )
+        tuning_runtime = AsyncTuningRuntime(
+            tuning_cfg=tuning_cfg,
+            teacher_template=teacher_backbone,
+            output_dir=tuning_output_dir,
+        )
+
         if bool(early_stop_cfg.get("enable", False)):
             from ijepath.eval.early_stopping import RobustnessEarlyStopper
 
@@ -769,38 +786,114 @@ def main(
     if tuning_enabled_cfg and run_baseline_at_zero and images_seen > 0:
         eval_index += 1
 
+    def enqueue_tuning_eval(
+        *,
+        eval_index_value: int,
+        eval_images_seen: int,
+        early_stop_snapshot: dict,
+        images_seen_at_log: int,
+    ) -> None:
+        if rank != 0 or tuning_runtime is None:
+            return
+
+        teacher_backbone = target_encoder.module if hasattr(target_encoder, "module") else target_encoder
+        snapshot_path = tuning_snapshots_dir / f"teacher_eval_{int(eval_index_value):06d}.pth"
+        torch.save(teacher_backbone.state_dict(), snapshot_path)
+        queue_stats = tuning_runtime.submit(
+            eval_index=int(eval_index_value),
+            images_seen=int(eval_images_seen),
+            snapshot_path=str(snapshot_path),
+        )
+        pending_eval_snapshots[int(eval_index_value)] = dict(early_stop_snapshot)
+
+        if wandb_enabled:
+            queue_log: dict[str, float | int] = {
+                "tune/eval_index": int(eval_index_value),
+                "tune/eval_images_seen": int(eval_images_seen),
+                "train/images_seen_at_log": int(images_seen_at_log),
+                "tune/queue_depth": int(queue_stats.get("queue_depth", 0)),
+                "tune/dropped_evals": int(queue_stats.get("dropped_evals", 0)),
+            }
+            log_dict(queue_log)
+
+    def process_tuning_completions(*, images_seen_at_log: int) -> None:
+        nonlocal should_stop_training
+        if rank != 0 or tuning_runtime is None:
+            return
+
+        completed = tuning_runtime.poll_completed()
+        for event in completed:
+            if event.get("error") is not None:
+                raise RuntimeError(
+                    "Async tuning evaluation failed "
+                    f"(eval_index={event.get('eval_index')}): {event.get('error')}\n"
+                    f"{event.get('traceback') or ''}"
+                )
+
+            tune_results = dict(event.get("result") or {})
+            tune_metrics = dict(tune_results.get("log_metrics", {}) or {})
+            event_eval_index = int(event.get("eval_index", -1))
+            event_images_seen = int(event.get("images_seen", 0))
+            event_latency = float(event.get("latency_seconds", 0.0))
+            event_worker_seconds = float(event.get("worker_seconds", 0.0))
+
+            if tune_metrics:
+                logger.info(
+                    "Async tuning results at images_seen=%d (eval_index=%d): %s",
+                    event_images_seen,
+                    event_eval_index,
+                    ", ".join(f"{k}={v:.5f}" for k, v in sorted(tune_metrics.items())),
+                )
+
+            if wandb_enabled:
+                tune_log: dict[str, float | int] = {
+                    "tune/eval_index": int(event_eval_index),
+                    "tune/eval_images_seen": int(event_images_seen),
+                    "train/images_seen_at_log": int(images_seen_at_log),
+                    "tune/queue_depth": int(tuning_runtime.queue_depth()),
+                    "tune/dropped_evals": int(tuning_runtime.dropped_evals()),
+                    "tune/result_lag_images": int(max(0, int(images_seen_at_log) - int(event_images_seen))),
+                    "tune/result_lag_seconds": float(event_latency),
+                    "tune/worker_seconds": float(event_worker_seconds),
+                    "tune/tuning_blocked_ms": 0.0,
+                }
+                if tune_metrics:
+                    update_log_dict("tune", tune_metrics, tune_log, step="tune/eval_images_seen")
+                log_dict(tune_log)
+
+            snapshot = pending_eval_snapshots.pop(event_eval_index, None)
+            if early_stopper is not None:
+                selection = tune_results.get("selection")
+                if selection is not None and selection.get("metric_value") is not None:
+                    if snapshot is None:
+                        snapshot = build_snapshot(
+                            pass_id=max(0, pass_index),
+                            loss_avg=float("nan"),
+                        )
+                    early_stopper.on_eval(
+                        metric_value=float(selection["metric_value"]),
+                        snapshot=snapshot,
+                    )
+                    if bool(early_stop_cfg.get("stop_training", False)) and early_stopper.should_stop:
+                        should_stop_training = True
+
+    def sync_stop_flag(local_flag: bool) -> bool:
+        if not use_ddp:
+            return bool(local_flag)
+        flag_tensor = torch.tensor([1 if local_flag else 0], device=device, dtype=torch.int32)
+        dist.broadcast(flag_tensor, src=0)
+        return bool(int(flag_tensor.item()))
+
     should_stop_training = False
     try:
         if tuning_enabled_cfg and run_baseline_at_zero and images_seen == 0:
-            if rank == 0 and tuner is not None:
-                baseline_results = tuner.tune(
-                    teacher=target_encoder,
-                    eval_index=0,
-                    images_seen=0,
+            if rank == 0 and tuning_runtime is not None:
+                enqueue_tuning_eval(
+                    eval_index_value=0,
+                    eval_images_seen=0,
+                    early_stop_snapshot=build_snapshot(pass_id=0, loss_avg=float("nan")),
+                    images_seen_at_log=0,
                 )
-                baseline_metrics = tuner.get_log_metrics(baseline_results)
-                if baseline_metrics:
-                    logger.info("Baseline tuning results at images_seen=0")
-                    for metric_name, value in baseline_metrics.items():
-                        logger.info("  %s: %.6f", metric_name, value)
-                    if wandb_enabled:
-                        baseline_log: dict[str, float | int] = {
-                            "eval_index": 0,
-                            "images_seen": 0,
-                        }
-                        update_log_dict("tune", baseline_metrics, baseline_log, step="images_seen")
-                        log_images_seen_dict(baseline_log, images_seen=0)
-
-                if early_stopper is not None:
-                    baseline_selection = tuner.get_selection(baseline_results)
-                    if baseline_selection is not None and baseline_selection.get("metric_value") is not None:
-                        early_stopper.on_eval(
-                            metric_value=float(baseline_selection["metric_value"]),
-                            snapshot=build_snapshot(pass_id=0, loss_avg=float("nan")),
-                        )
-
-            if use_ddp:
-                dist.barrier()
             eval_index = max(eval_index, 1)
 
         while steps_done < total_steps and not should_stop_training:
@@ -1014,44 +1107,23 @@ def main(
 
                     for crossed in crossed_tune:
                         current_eval_index = int(eval_index)
-                        if rank == 0 and tuner is not None:
-                            tune_results = tuner.tune(
-                                teacher=target_encoder,
-                                eval_index=current_eval_index,
-                                images_seen=int(crossed),
+                        if rank == 0 and tuning_runtime is not None:
+                            enqueue_tuning_eval(
+                                eval_index_value=current_eval_index,
+                                eval_images_seen=int(crossed),
+                                early_stop_snapshot=build_snapshot(
+                                    pass_id=current_pass_index,
+                                    loss_avg=float(loss_meter.avg),
+                                ),
+                                images_seen_at_log=int(images_seen),
                             )
-                            tune_metrics = tuner.get_log_metrics(tune_results)
-                            if tune_metrics:
-                                logger.info(
-                                    "Tuning results at images_seen=%d (eval_index=%d): %s",
-                                    int(crossed),
-                                    current_eval_index,
-                                    ", ".join(f"{k}={v:.5f}" for k, v in sorted(tune_metrics.items())),
-                                )
-                            if wandb_enabled and tune_metrics:
-                                tune_log: dict[str, float | int] = {
-                                    "eval_index": current_eval_index,
-                                    "images_seen": int(crossed),
-                                }
-                                update_log_dict("tune", tune_metrics, tune_log, step="images_seen")
-                                log_images_seen_dict(tune_log, images_seen=int(crossed))
-
-                            if early_stopper is not None:
-                                selection = tuner.get_selection(tune_results)
-                                if selection is not None and selection.get("metric_value") is not None:
-                                    early_stopper.on_eval(
-                                        metric_value=float(selection["metric_value"]),
-                                        snapshot=build_snapshot(
-                                            pass_id=current_pass_index,
-                                            loss_avg=float(loss_meter.avg),
-                                        ),
-                                    )
-                                    if bool(early_stop_cfg.get("stop_training", False)) and early_stopper.should_stop:
-                                        should_stop_training = True
-
-                        if use_ddp:
-                            dist.barrier()
                         eval_index += 1
+
+                    if tuning_enabled_cfg and rank == 0 and tuning_runtime is not None:
+                        if (steps_done % max(1, tune_poll_every_steps)) == 0:
+                            process_tuning_completions(images_seen_at_log=int(images_seen))
+
+                    should_stop_training = sync_stop_flag(bool(should_stop_training))
 
                     if steps_done >= total_steps or should_stop_training:
                         break
@@ -1110,6 +1182,9 @@ def main(
 
             pass_index += 1
 
+        if tuning_enabled_cfg and rank == 0 and tuning_runtime is not None:
+            process_tuning_completions(images_seen_at_log=int(images_seen))
+
         final_snapshot = build_snapshot(
             pass_id=max(0, pass_index),
             loss_avg=float("nan"),
@@ -1123,6 +1198,12 @@ def main(
         if should_stop_training:
             logger.info(f"Training terminated early by robustness early stopping at images_seen={images_seen}")
     finally:
+        if rank == 0 and tuning_runtime is not None:
+            try:
+                process_tuning_completions(images_seen_at_log=int(images_seen))
+            except Exception:
+                logger.exception("Failed to process async tuning completions during shutdown")
+            tuning_runtime.shutdown(wait=False, timeout_s=2.0)
         if wandb_enabled:
             finish_wandb(exit_code=resolve_uncaught_exception_exit_code())
         if dist.is_available() and dist.is_initialized():

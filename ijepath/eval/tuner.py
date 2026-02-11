@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -144,12 +145,11 @@ class Tuner:
         out_csv = self.metrics_dir / f"eval_{int(eval_index):04d}.csv"
         df.to_csv(out_csv, index=False)
 
-        roll_csv = self.metrics_dir / "all_metrics.csv"
-        if roll_csv.exists():
-            old = pd.read_csv(roll_csv)
-            pd.concat([old, df], axis=0).reset_index(drop=True).to_csv(roll_csv, index=False)
-        else:
-            df.to_csv(roll_csv, index=False)
+        roll_jsonl = self.metrics_dir / "all_metrics.jsonl"
+        with roll_jsonl.open("a", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=True))
+                handle.write("\n")
 
         logger.info(
             "Persisted unified tuning metrics: rows=%d eval_index=%d images_seen=%d",

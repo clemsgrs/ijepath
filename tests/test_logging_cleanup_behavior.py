@@ -376,3 +376,85 @@ def test_run_checked_raises_with_command_output_on_failure(monkeypatch):
         text = str(exc)
         assert "Pipeline stage failed" in text
         assert "stdout" in text and "stderr" in text
+
+
+def test_resolve_reserved_tuning_device_token_returns_none_when_tuning_disabled(monkeypatch):
+    monkeypatch.setattr(
+        main_entry,
+        "load_training_config",
+        lambda **_kwargs: {"tuning": {"enable": False}},
+    )
+    token = main_entry._resolve_reserved_tuning_device_token(
+        profile_config="profile.yaml",
+        run_config="run.yaml",
+        opts=[],
+        visible_devices=["0", "1"],
+    )
+    assert token is None
+
+
+def test_resolve_reserved_tuning_device_token_validates_visibility(monkeypatch):
+    monkeypatch.setattr(
+        main_entry,
+        "load_training_config",
+        lambda **_kwargs: {
+            "tuning": {"enable": True, "execution": {"mode": "async", "device": "cuda:2"}}
+        },
+    )
+    try:
+        main_entry._resolve_reserved_tuning_device_token(
+            profile_config="profile.yaml",
+            run_config="run.yaml",
+            opts=[],
+            visible_devices=["0", "1"],
+        )
+        raise AssertionError("Expected SystemExit for non-visible dedicated tuning GPU")
+    except SystemExit as exc:
+        assert "not visible" in str(exc)
+
+
+def test_resolve_reserved_tuning_device_token_auto_picks_last_visible(monkeypatch):
+    monkeypatch.setattr(
+        main_entry,
+        "load_training_config",
+        lambda **_kwargs: {"tuning": {"enable": True, "execution": {"mode": "async", "device": "auto"}}},
+    )
+    token = main_entry._resolve_reserved_tuning_device_token(
+        profile_config="profile.yaml",
+        run_config="run.yaml",
+        opts=[],
+        visible_devices=["0", "1", "2"],
+    )
+    assert token == "2"
+
+
+def test_process_main_remaps_rank0_tuning_device_to_local_cuda1(monkeypatch):
+    captured_opts = {}
+
+    class _FakeLogger:
+        def info(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(main_entry, "setup_logging", lambda **_: _FakeLogger())
+    monkeypatch.setattr(main_entry, "init_distributed", lambda **_kwargs: (1, 0))
+
+    def _fake_load_training_config(**kwargs):
+        captured_opts["opts"] = list(kwargs.get("opts") or [])
+        return {"ok": True}
+
+    monkeypatch.setattr(main_entry, "load_training_config", _fake_load_training_config)
+    monkeypatch.setattr(main_entry, "app_main", lambda **_kwargs: None)
+
+    main_entry.process_main(
+        rank=0,
+        profile_config="profile.yaml",
+        run_config="run.yaml",
+        opts=["x=1", "tuning.execution.device=cuda:7"],
+        world_size=1,
+        visible_devices=["0"],
+        master_addr=None,
+        master_port=None,
+        tuning_device_token="7",
+    )
+
+    assert "tuning.execution.device=cuda:1" in captured_opts["opts"]
