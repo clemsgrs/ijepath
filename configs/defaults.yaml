@@ -8,8 +8,14 @@ data:
 
   # -- Required paths (override in run config)
   slide_manifest_csv:
-  slide_metadata_index_jsonl:
-  anchor_catalog_csv:
+  slide_metadata_parquet:
+  anchor_catalog_manifest:
+  sampling_strategy: stratified_weighted  # global_uniform | stratified_weighted
+  sampling_stratum_key: organ
+  sampling_stratum_weights: inverse_frequency  # inverse_frequency | uniform | {"stratum": weight}
+  persistent_workers: true
+  prefetch_factor: 4
+  max_open_slides_per_worker: 16
 
   # -- Cross-resolution geometry (override in profile config)
   # Final model tensor sizes are derived as nearest multiples of meta.patch_size:

@@ -1,5 +1,6 @@
 import main as main_entry
 import torch
+from pathlib import Path
 
 
 def test_process_main_defers_config_logging_to_trainer(monkeypatch):
@@ -264,3 +265,53 @@ def test_launch_worker_processes_raises_on_failed_child(monkeypatch):
         raise AssertionError("Expected SystemExit when a worker exits with nonzero status")
     except SystemExit as exc:
         assert "rank=1" in str(exc)
+
+
+def test_has_opt_detects_dotlist_prefix():
+    assert main_entry._has_opt(["a=1", "logging.folder=/tmp/out"], "logging.folder=") is True
+    assert main_entry._has_opt(["a=1"], "logging.folder=") is False
+
+
+def test_orchestrate_pipeline_artifacts_runs_both_build_stages(monkeypatch, tmp_path: Path):
+    calls: list[list[str]] = []
+
+    class _Ok:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def _fake_run(cmd, **_kwargs):
+        calls.append(list(cmd))
+        return _Ok()
+
+    monkeypatch.setattr(main_entry.subprocess, "run", _fake_run)
+
+    out = main_entry.orchestrate_pipeline_artifacts(
+        profile_config=str(tmp_path / "profile.yaml"),
+        manifest_csv=str(tmp_path / "manifest.csv"),
+        output_folder=str(tmp_path / "out"),
+    )
+
+    assert len(calls) == 2
+    assert calls[0][1].endswith("scripts/build_slide_metadata_index_from_manifest.py")
+    assert calls[1][1].endswith("scripts/build_valid_context_anchor_catalog.py")
+    assert out["slide_metadata_parquet"].endswith("indexes/slide_metadata.parquet")
+    assert out["anchor_catalog_manifest"].endswith("indexes/anchor_catalog_manifest.json")
+    assert out["training_output_folder"].endswith("/out")
+
+
+def test_run_checked_raises_with_command_output_on_failure(monkeypatch):
+    class _Fail:
+        returncode = 9
+        stdout = "x"
+        stderr = "y"
+
+    monkeypatch.setattr(main_entry.subprocess, "run", lambda *args, **kwargs: _Fail())
+
+    try:
+        main_entry._run_checked(["echo", "hello"])
+        raise AssertionError("Expected SystemExit for failing command")
+    except SystemExit as exc:
+        text = str(exc)
+        assert "Pipeline stage failed" in text
+        assert "stdout" in text and "stderr" in text

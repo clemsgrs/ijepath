@@ -14,8 +14,8 @@ data:
   # Required run-specific paths.
   # Defaults in defaults.yaml are null and must be set for a real run.
   slide_manifest_csv: null
-  slide_metadata_index_jsonl: null
-  anchor_catalog_csv: null
+  slide_metadata_parquet: null
+  anchor_catalog_manifest: null
 
   # Geometry and spacing are usually provided by the profile config.
   # Keep these unset here unless you intentionally override profile values.

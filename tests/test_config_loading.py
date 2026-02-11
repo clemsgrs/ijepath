@@ -21,8 +21,8 @@ def test_layered_config_merge_and_opts_override(tmp_path: Path):
         {
             "data": {
                 "slide_manifest_csv": "default_manifest.csv",
-                "slide_metadata_index_jsonl": "default_index.jsonl",
-                "anchor_catalog_csv": "default_anchor.csv",
+                "slide_metadata_parquet": "default_index.jsonl",
+                "anchor_catalog_manifest": "default_anchor.csv",
                 "context_mpp": 1.0,
                 "target_mpp": 0.5,
                 "context_fov_um": 512.0,
@@ -50,8 +50,8 @@ def test_layered_config_merge_and_opts_override(tmp_path: Path):
         {
             "data": {
                 "slide_manifest_csv": "run_manifest.csv",
-                "slide_metadata_index_jsonl": "run_index.jsonl",
-                "anchor_catalog_csv": "run_anchor.csv",
+                "slide_metadata_parquet": "run_index.jsonl",
+                "anchor_catalog_manifest": "run_anchor.csv",
             }
         },
     )
@@ -83,8 +83,8 @@ def test_layered_config_requires_required_paths(tmp_path: Path):
         {
             "data": {
                 "slide_manifest_csv": None,
-                "slide_metadata_index_jsonl": None,
-                "anchor_catalog_csv": None,
+                "slide_metadata_parquet": None,
+                "anchor_catalog_manifest": None,
                 "batch_size_per_gpu": 2,
                 "context_mpp": 1.0,
                 "target_mpp": 0.5,
@@ -118,8 +118,8 @@ def test_layered_config_enforces_num_pred_masks_matches_targets(tmp_path: Path):
         {
             "data": {
                 "slide_manifest_csv": "a.csv",
-                "slide_metadata_index_jsonl": "b.jsonl",
-                "anchor_catalog_csv": "c.csv",
+                "slide_metadata_parquet": "b.jsonl",
+                "anchor_catalog_manifest": "c.csv",
                 "batch_size_per_gpu": 2,
                 "context_mpp": 1.0,
                 "target_mpp": 0.5,
@@ -153,8 +153,8 @@ def test_layered_config_rejects_conflicting_duplicate_values_within_profile(tmp_
         {
             "data": {
                 "slide_manifest_csv": "a.csv",
-                "slide_metadata_index_jsonl": "b.jsonl",
-                "anchor_catalog_csv": "c.csv",
+                "slide_metadata_parquet": "b.jsonl",
+                "anchor_catalog_manifest": "c.csv",
                 "batch_size_per_gpu": 2,
                 "context_mpp": 1.0,
                 "target_mpp": 0.5,
@@ -188,8 +188,8 @@ def test_legacy_batch_size_is_rejected(tmp_path: Path):
         {
             "data": {
                 "slide_manifest_csv": "a.csv",
-                "slide_metadata_index_jsonl": "b.jsonl",
-                "anchor_catalog_csv": "c.csv",
+                "slide_metadata_parquet": "b.jsonl",
+                "anchor_catalog_manifest": "c.csv",
                 "batch_size": 6,
                 "context_mpp": 1.0,
                 "target_mpp": 0.5,
@@ -211,3 +211,31 @@ def test_legacy_batch_size_is_rejected(tmp_path: Path):
             profile_config=str(profile_cfg),
             run_config=str(run_cfg),
         )
+
+
+def test_legacy_anchor_catalog_and_slide_index_keys_are_rejected(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(
+        cfg_path,
+        {
+            "data": {
+                "slide_manifest_csv": "a.csv",
+                "slide_metadata_index_jsonl": "legacy_index.jsonl",
+                "anchor_catalog_csv": "legacy_anchor.csv",
+                "slide_metadata_parquet": "new_index.parquet",
+                "anchor_catalog_manifest": "new_manifest.json",
+                "batch_size_per_gpu": 2,
+                "context_mpp": 1.0,
+                "target_mpp": 0.5,
+                "context_fov_um": 512.0,
+                "target_fov_um": 128.0,
+                "targets_per_context": 4,
+            },
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10},
+            "meta": {"architecture": "vit_small", "patch_size": 16},
+            "optimization": {"total_images_budget": 1000},
+        },
+    )
+
+    with pytest.raises(ValueError, match="data.slide_metadata_index_jsonl"):
+        load_training_config(config_file=str(cfg_path))

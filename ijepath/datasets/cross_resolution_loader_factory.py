@@ -1,5 +1,4 @@
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 
 from ijepath.datasets.cross_resolution_wsi_dataset import (
     CrossResolutionWSIDataset,
@@ -49,7 +48,7 @@ def make_cross_resolution_loader(
     world_size: int,
     rank: int,
     drop_last: bool,
-    anchor_catalog_csv: str,
+    anchor_catalog_manifest: str,
     patch_size: int,
     context_mpp: float,
     target_mpp: float,
@@ -66,6 +65,12 @@ def make_cross_resolution_loader(
     num_enc_masks: int,
     backend: str = "asap",
     align_targets_to_patch_grid: bool = False,
+    sampling_strategy: str = "stratified_weighted",
+    sampling_stratum_key: str = "organ",
+    sampling_stratum_weights: str | dict = "inverse_frequency",
+    persistent_workers: bool = True,
+    prefetch_factor: int = 4,
+    max_open_slides_per_worker: int = 16,
 ):
     context_size_raw_px = max(1, int(round(float(context_fov_um) / float(context_mpp))))
     target_size_raw_px = max(1, int(round(float(target_fov_um) / float(target_mpp))))
@@ -78,7 +83,7 @@ def make_cross_resolution_loader(
         patch_size=int(patch_size),
     )
     dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=anchor_catalog_csv,
+        anchor_catalog_manifest=anchor_catalog_manifest,
         context_mpp=context_mpp,
         target_mpp=target_mpp,
         context_fov_um=context_fov_um,
@@ -93,13 +98,12 @@ def make_cross_resolution_loader(
         min_target_tissue_fraction_step=min_target_tissue_fraction_step,
         backend=backend,
         align_targets_to_patch_grid=align_targets_to_patch_grid,
-    )
-
-    dist_sampler = DistributedSampler(
-        dataset=dataset,
-        num_replicas=world_size,
+        world_size=world_size,
         rank=rank,
-        shuffle=True,
+        sampling_strategy=sampling_strategy,
+        sampling_stratum_key=sampling_stratum_key,
+        sampling_stratum_weights=sampling_stratum_weights,
+        max_open_slides_per_worker=max_open_slides_per_worker,
     )
 
     collator = ContextTargetFootprintMaskCollator(
@@ -115,15 +119,18 @@ def make_cross_resolution_loader(
         patch_size=patch_size,
     )
 
-    loader = DataLoader(
-        dataset,
-        sampler=dist_sampler,
-        collate_fn=collator,
-        batch_size=batch_size,
-        drop_last=drop_last,
-        pin_memory=pin_mem,
-        num_workers=num_workers,
-        persistent_workers=False,
-    )
+    loader_kwargs = {
+        "dataset": dataset,
+        "collate_fn": collator,
+        "batch_size": batch_size,
+        "drop_last": drop_last,
+        "pin_memory": pin_mem,
+        "num_workers": num_workers,
+        "persistent_workers": bool(persistent_workers and num_workers > 0),
+    }
+    if num_workers > 0:
+        loader_kwargs["prefetch_factor"] = max(1, int(prefetch_factor))
 
-    return dataset, loader, dist_sampler
+    loader = DataLoader(**loader_kwargs)
+
+    return dataset, loader, None

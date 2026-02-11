@@ -15,8 +15,8 @@ def _base_cfg() -> dict:
     return {
         "data": {
             "slide_manifest_csv": "a.csv",
-            "slide_metadata_index_jsonl": "b.jsonl",
-            "anchor_catalog_csv": "c.csv",
+            "slide_metadata_parquet": "b.jsonl",
+            "anchor_catalog_manifest": "c.csv",
             "batch_size_per_gpu": 2,
             "context_mpp": 1.0,
             "target_mpp": 0.5,

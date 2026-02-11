@@ -1,20 +1,24 @@
 from pathlib import Path
 
+import importlib.util
 import pytest
 import torch
 
 from ijepath.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
 
+if importlib.util.find_spec("pyarrow") is None:
+    pytest.skip("pyarrow is required for parquet pipeline tests", allow_module_level=True)
+
 
 def test_cross_resolution_dataset_shapes_and_determinism():
     repo_root = Path(__file__).resolve().parents[1]
-    anchor_csv = repo_root / "data/tcga-prad/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv"
+    anchor_csv = repo_root / "data/tcga-prad/indexes/anchor_catalog_manifest.json"
 
     if not anchor_csv.exists():
         pytest.skip("Anchor catalog is not available yet")
 
     dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(anchor_csv),
+        anchor_catalog_manifest=str(anchor_csv),
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=512.0,

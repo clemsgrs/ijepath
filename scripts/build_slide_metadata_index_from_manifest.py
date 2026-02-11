@@ -1,67 +1,79 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
 import csv
-import json
 import sys
-import tqdm
 import traceback
 from pathlib import Path
+
+import tqdm
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from ijepath.datasets.wsi_readers.wholeslidedata_reader_adapter import WholeSlideDataReaderAdapter
+from ijepath.utils.parquet import require_pyarrow
+
+
+CORE_MANIFEST_COLUMNS = {"slide_id", "wsi_path", "slide_path", "mask_path"}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build slide metadata index from a WSI+mask manifest.")
     parser.add_argument("--manifest", required=True, type=str, help="CSV with slide_id,wsi_path,mask_path")
-    parser.add_argument("--output", required=True, type=str, help="Output JSONL path")
+    parser.add_argument("--output", required=True, type=str, help="Output Parquet path")
     parser.add_argument("--report", type=str, default=None, help="Optional process report CSV path")
     parser.add_argument("--backend", type=str, default="asap", help="wholeslidedata backend")
-    parser.add_argument("--resume", action="store_true", help="Reuse existing rows from output JSONL")
+    parser.add_argument("--resume", action="store_true", help="Reuse existing rows from output parquet")
     return parser.parse_args()
 
 
-def load_existing_rows(output_path: Path):
-    rows = {}
+def load_existing_rows(output_path: Path) -> dict[str, dict]:
     if not output_path.exists():
-        return rows
-    for line in output_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        row = json.loads(line)
-        rows[row["slide_id"]] = row
-    return rows
+        return {}
+    _, _, ds = require_pyarrow()
+    table = ds.dataset(str(output_path), format="parquet").to_table()
+    rows = table.to_pylist()
+    return {str(row["slide_id"]): dict(row) for row in rows}
 
 
-def read_manifest(manifest_path: Path):
+def read_manifest(manifest_path: Path) -> list[dict]:
     with manifest_path.open("r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        rows = []
+        if reader.fieldnames is None:
+            raise ValueError(f"Manifest is missing headers: {manifest_path}")
+        rows: list[dict] = []
         for row in reader:
             wsi_path = row.get("wsi_path") or row.get("slide_path")
             if not wsi_path:
                 raise ValueError("Manifest must include `wsi_path` or `slide_path` column")
             slide_id = row.get("slide_id") or Path(wsi_path).stem
+            metadata = {
+                str(k): v
+                for k, v in row.items()
+                if str(k) not in CORE_MANIFEST_COLUMNS and v not in (None, "")
+            }
             rows.append(
                 {
                     "slide_id": slide_id,
                     "wsi_path": str(Path(wsi_path).resolve()),
                     "mask_path": str(Path(row["mask_path"]).resolve()) if row.get("mask_path") else None,
+                    "metadata": metadata,
                 }
             )
         return rows
 
 
-def build_slide_row(slide_id: str, wsi_path: str, mask_path: str | None, backend: str):
+def build_slide_row(slide_id: str, wsi_path: str, mask_path: str | None, backend: str, metadata: dict):
     result = {
         "slide_id": slide_id,
         "wsi_path": wsi_path,
         "mask_path": mask_path,
         "status": "ok",
         "error": None,
+        "metadata": dict(metadata),
     }
 
     try:
@@ -118,14 +130,18 @@ def build_slide_row(slide_id: str, wsi_path: str, mask_path: str | None, backend
         result["error"] = f"{type(exc).__name__}: {exc}"
         result["traceback"] = traceback.format_exc()
 
+    # Flatten manifest metadata for downstream stratification (organ/site/...)
+    for key, value in result.pop("metadata", {}).items():
+        result[str(key)] = value
+
     return result
 
 
-def write_jsonl(path: Path, rows: list[dict]):
+def write_parquet(path: Path, rows: list[dict]) -> None:
+    pa, pq, _ = require_pyarrow()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row) + "\n")
+    table = pa.Table.from_pylist(rows)
+    pq.write_table(table, str(path))
 
 
 def write_report(path: Path, rows: list[dict]):
@@ -173,10 +189,11 @@ def main() -> int:
                     wsi_path=row["wsi_path"],
                     mask_path=row["mask_path"],
                     backend=args.backend,
+                    metadata=row.get("metadata", {}),
                 )
             )
 
-    write_jsonl(output_path, final_rows)
+    write_parquet(output_path, final_rows)
     write_report(report_path, final_rows)
 
     ok_count = sum(1 for row in final_rows if row.get("status") == "ok")
