@@ -1125,6 +1125,11 @@ def main(
     finally:
         if wandb_enabled:
             finish_wandb(exit_code=resolve_uncaught_exception_exit_code())
+        if dist.is_available() and dist.is_initialized():
+            try:
+                dist.destroy_process_group()
+            except Exception as exc:
+                logger.warning("WARNING! Failed to destroy distributed process group cleanly: %s", exc)
 
 
 if __name__ == "__main__":
