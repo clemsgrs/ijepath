@@ -68,16 +68,19 @@ tuning:
   enable: false
   seed: 0
   execution:
-    mode: async
-    device: auto
-    max_pending_jobs: 2
-    coalesce_policy: newest
-    poll_every_steps: 10
-    fail_on_backlog: false
-    keep_last_n_snapshots: 2
+    mode: async  # Only supported mode; tuning runs asynchronously from rank-0 training loop.
+    device: auto  # auto = reserve one visible GPU for tuning; or set cuda:<id> explicitly.
+    max_pending_jobs: 2  # Max queued eval snapshots before coalescing/dropping kicks in.
+    coalesce_policy: newest  # Keep newest requests under backlog pressure (drop older queued evals).
+    poll_every_steps: 10  # Training loop polls async tuning results every N optimizer steps.
+    fail_on_backlog: false  # If true, raise when queue is full instead of dropping stale queued evals.
+    keep_last_n_snapshots: 2  # Keep at most N evaluator snapshot files on disk.
   schedule:
     interval_images: 1000000  # Run tuner every N global images seen.
     run_baseline_at_zero: true
+  # PathoROB plugin knobs are configured under tuning.plugins[*], including:
+  # - feature_num_workers / feature_persistent_workers / feature_prefetch_factor
+  # - ri.every_n_evals / apd.every_n_evals / clustering.every_n_evals
   plugins: []
   early_stopping:
     enable: false

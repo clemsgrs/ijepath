@@ -135,6 +135,17 @@ CUDA_VISIBLE_DEVICES=0,1 python main.py \
   tuning.plugins[0].datasets.camelyon.manifest_csv=${DATA_ROOT}/pathorob/camelyon_manifest.csv
 ```
 
+Async tuning behavior and key knobs:
+- `tuning.execution.mode=async`: evaluator runs out-of-band; training step loop does not block on tuning execution.
+- `tuning.execution.device=auto`: reserves one visible GPU for tuning automatically (`cuda:<id>` also supported).
+- `tuning.execution.max_pending_jobs`: queue cap for pending eval snapshots.
+- `tuning.execution.coalesce_policy=newest`: stale queued evals are dropped first under backlog.
+- `tuning.execution.poll_every_steps`: how often training polls completed eval results.
+- `tuning.execution.keep_last_n_snapshots`: limits on-disk teacher snapshot retention.
+- `tuning.plugins[*].feature_num_workers`, `feature_persistent_workers`, `feature_prefetch_factor`: feature extraction loader throughput controls.
+- `tuning.plugins[*].ri/apd/clustering.every_n_evals`: cadence controls for heavy metrics.
+- Async `wandb` tune logging is keyed to `tune/eval_images_seen` (plus `train/images_seen_at_log`) so curves stay aligned to evaluation image budget.
+
 Checkpoint semantics:
 - Always keeps `<write_tag>-latest.pth.tar`
 - Also writes image-tagged snapshots at thresholds:

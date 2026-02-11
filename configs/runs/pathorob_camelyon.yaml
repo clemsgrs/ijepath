@@ -30,13 +30,13 @@ tuning:
   enable: true
   seed: 0
   execution:
-    mode: async
-    device: auto
-    max_pending_jobs: 2
-    coalesce_policy: newest
-    poll_every_steps: 10
-    fail_on_backlog: false
-    keep_last_n_snapshots: 2
+    mode: async  # Non-blocking tuning sidecar; training no longer waits on evaluator execution.
+    device: auto  # Auto-reserve one GPU for tuning (use cuda:<id> to pin manually).
+    max_pending_jobs: 2  # Bound pending eval jobs so queue growth stays controlled.
+    coalesce_policy: newest  # Keep newest queued eval requests when backlog occurs.
+    poll_every_steps: 10  # Poll completed async tune jobs every N train steps.
+    fail_on_backlog: false  # True => fail fast on full queue; false => drop stale queued evals.
+    keep_last_n_snapshots: 2  # Limit on-disk teacher snapshots retained by async tuner.
   schedule:
     interval_images: 10000  # Run tuner every N global images seen.
     run_baseline_at_zero: true
@@ -46,6 +46,9 @@ tuning:
       enable: true
       batch_size_per_gpu: ${data.batch_size_per_gpu}
       num_workers: ${data.num_workers}
+      feature_num_workers: ${data.num_workers}  # Feature extraction DataLoader workers.
+      feature_persistent_workers: true  # Keep feature workers alive across eval events.
+      feature_prefetch_factor: 4  # Batches prefetched per feature worker.
       transforms:
         resize: 256
         crop_size: null
@@ -63,18 +66,18 @@ tuning:
           ood_centers: ["CWZ", "RST", "LPON"]
       ri:
         enable: true
-        every_n_evals: 1
+        every_n_evals: 1  # Run RI at every tuning event (required if used for early stopping).
         k_candidates: [3, 5, 7, 10, 15]
       apd:
         enable: true
-        every_n_evals: 5
+        every_n_evals: 5  # Heavy metric; run every 5 eval events by default.
         mode: custom
         correlation_levels: [0.0, 0.14, 0.29, 0.43, 0.57, 0.71, 0.86, 1.0]
         repetitions: 3
         id_test_fraction: 0.2
       clustering:
         enable: true
-        every_n_evals: 5
+        every_n_evals: 5  # Heavy metric; run every 5 eval events by default.
         repeats: 5
         k_min: 2
         k_max: 10
