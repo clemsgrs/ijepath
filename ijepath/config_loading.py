@@ -165,6 +165,10 @@ def _attach_config_sources(
 def _validate_training_config(cfg: dict[str, Any]) -> None:
     if "batch_size" in cfg.get("data", {}):
         raise ValueError("Unsupported config value: data.batch_size")
+    if "slide_metadata_index_jsonl" in cfg.get("data", {}):
+        raise ValueError("Unsupported config value: data.slide_metadata_index_jsonl")
+    if "anchor_catalog_csv" in cfg.get("data", {}):
+        raise ValueError("Unsupported config value: data.anchor_catalog_csv")
     if "samples_per_chunk" in cfg.get("data", {}):
         raise ValueError("Unsupported config value: data.samples_per_chunk")
     if "samples_per_epoch" in cfg.get("data", {}):
@@ -176,8 +180,8 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
 
     required_paths = (
         ("data", "slide_manifest_csv"),
-        ("data", "slide_metadata_index_jsonl"),
-        ("data", "anchor_catalog_csv"),
+        ("data", "slide_metadata_parquet"),
+        ("data", "anchor_catalog_manifest"),
     )
     required_geometry = (
         ("data", "context_mpp"),

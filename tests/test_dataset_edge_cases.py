@@ -1,9 +1,12 @@
-import csv
+import importlib.util
+import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from ijepath.datasets.cross_resolution_loader_factory import make_cross_resolution_loader
 from ijepath.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
@@ -12,22 +15,51 @@ from ijepath.datasets.wsi_readers.wholeslidedata_reader_adapter import (
     spacing_pixels_to_level0_pixels,
 )
 
+if importlib.util.find_spec("pyarrow") is None:
+    pytest.skip("pyarrow is required for parquet pipeline tests", allow_module_level=True)
+
+
+def _write_anchor_manifest(path: Path, rows: list[dict]):
+    shard_path = path.with_suffix(".parquet")
+    normalized_rows = []
+    for row in rows:
+        row = dict(row)
+        row.setdefault("stratum_id", "unknown")
+        row.setdefault("profile_id", "test_profile")
+        normalized_rows.append(row)
+
+    table = pa.Table.from_pylist(normalized_rows)
+    pq.write_table(table, str(shard_path))
+
+    stratum_counts: dict[str, int] = {}
+    for row in normalized_rows:
+        stratum = str(row.get("stratum_id", "unknown"))
+        stratum_counts[stratum] = int(stratum_counts.get(stratum, 0) + 1)
+
+    manifest = {
+        "schema_version": 1,
+        "profile": {
+            "context_mpp": 1.0,
+            "target_mpp": 0.5,
+            "context_fov_um": 512.0,
+            "target_fov_um": 128.0,
+            "targets_per_context": 4,
+        },
+        "total_anchors": len(normalized_rows),
+        "stratum_counts": stratum_counts,
+        "anchor_shards": [
+            {
+                "path": str(shard_path.resolve()),
+                "rows": len(normalized_rows),
+                "stratum_counts": stratum_counts,
+            }
+        ],
+    }
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
 
 def _write_min_anchor_csv(path: Path, row: dict):
-    fieldnames = [
-        "anchor_id",
-        "slide_id",
-        "wsi_path",
-        "mask_path",
-        "center_x_level0",
-        "center_y_level0",
-        "wsi_level0_spacing_mpp",
-        "target_margin_um",
-    ]
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerow(row)
+    _write_anchor_manifest(path, [row])
 
 
 def test_reader_level0_border_in_bounds_threshold():
@@ -96,7 +128,7 @@ def test_dataset_choose_source_spacing_prefers_finer_when_requested_missing(tmp_
     )
 
     dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(dummy_csv),
+        anchor_catalog_manifest=str(dummy_csv),
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=512.0,
@@ -138,7 +170,7 @@ def test_dataset_border_anchor_sample_shapes(tmp_path):
     )
 
     dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(anchor_csv),
+        anchor_catalog_manifest=str(anchor_csv),
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=512.0,
@@ -176,7 +208,7 @@ def test_target_sampling_respects_min_tissue_fraction(tmp_path):
         },
     )
     dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(dummy_csv),
+        anchor_catalog_manifest=str(dummy_csv),
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
@@ -226,7 +258,7 @@ def test_target_sampling_alignment_toggle(tmp_path):
     )
 
     aligned_dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(dummy_csv),
+        anchor_catalog_manifest=str(dummy_csv),
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
@@ -248,7 +280,7 @@ def test_target_sampling_alignment_toggle(tmp_path):
     assert np.all(np.mod(aligned_boxes, 8) == 0), "Aligned mode should snap box edges to patch grid"
 
     free_dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(dummy_csv),
+        anchor_catalog_manifest=str(dummy_csv),
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
@@ -286,7 +318,7 @@ def test_target_sampling_returns_none_when_threshold_is_impossible(tmp_path):
         },
     )
     dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(dummy_csv),
+        anchor_catalog_manifest=str(dummy_csv),
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
@@ -333,7 +365,7 @@ def test_loader_factory_propagates_patch_alignment_toggle(tmp_path):
         world_size=1,
         rank=0,
         drop_last=False,
-        anchor_catalog_csv=str(anchor_csv),
+        anchor_catalog_manifest=str(anchor_csv),
         patch_size=8,
         context_mpp=1.0,
         target_mpp=0.5,
@@ -372,7 +404,7 @@ def test_rng_seed_varies_across_passes_for_same_index(tmp_path):
     )
 
     dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(dummy_csv),
+        anchor_catalog_manifest=str(dummy_csv),
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
@@ -407,80 +439,36 @@ def _make_dummy_sample(anchor_id: str, slide_id: str):
     }
 
 
-def test_getitem_skip_slide_policy_exhausts_slide_before_switching_slides(tmp_path):
-    anchor_csv = tmp_path / "anchors.csv"
-    fieldnames = [
-        "anchor_id",
-        "slide_id",
-        "wsi_path",
-        "mask_path",
-        "center_x_level0",
-        "center_y_level0",
-        "wsi_level0_spacing_mpp",
-        "target_margin_um",
-    ]
-    with anchor_csv.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(
-            [
-                {
-                    "anchor_id": "a0",
-                    "slide_id": "slideA",
-                    "wsi_path": "/tmp/a.tif",
-                    "mask_path": "",
-                    "center_x_level0": 0,
-                    "center_y_level0": 0,
-                    "wsi_level0_spacing_mpp": 0.25,
-                    "target_margin_um": 8.0,
-                },
-                {
-                    "anchor_id": "a1",
-                    "slide_id": "slideA",
-                    "wsi_path": "/tmp/a.tif",
-                    "mask_path": "",
-                    "center_x_level0": 0,
-                    "center_y_level0": 0,
-                    "wsi_level0_spacing_mpp": 0.25,
-                    "target_margin_um": 8.0,
-                },
-                {
-                    "anchor_id": "b0",
-                    "slide_id": "slideB",
-                    "wsi_path": "/tmp/b.tif",
-                    "mask_path": "",
-                    "center_x_level0": 0,
-                    "center_y_level0": 0,
-                    "wsi_level0_spacing_mpp": 0.25,
-                    "target_margin_um": 8.0,
-                },
-            ]
-        )
-
-    dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(anchor_csv),
-        context_mpp=1.0,
-        target_mpp=0.5,
-        context_fov_um=64.0,
-        target_fov_um=16.0,
-        patch_size=16,
-        targets_per_context=4,
-        seed=0,
-        insufficient_target_policy="skip_slide",
+def test_skip_slide_policy_is_rejected(tmp_path):
+    anchor_manifest = tmp_path / "anchors.csv"
+    _write_anchor_manifest(
+        anchor_manifest,
+        [
+            {
+                "anchor_id": "a0",
+                "slide_id": "slideA",
+                "wsi_path": "/tmp/a.tif",
+                "mask_path": "",
+                "center_x_level0": 0,
+                "center_y_level0": 0,
+                "wsi_level0_spacing_mpp": 0.25,
+                "target_margin_um": 8.0,
+            }
+        ],
     )
 
-    seen = []
-
-    def fake_build(anchor, index, anchor_attempt, min_target_tissue_fraction=None):
-        seen.append(anchor["anchor_id"])
-        if anchor["anchor_id"] == "b0":
-            return _make_dummy_sample(anchor_id="b0", slide_id="slideB")
-        return None
-
-    dataset._build_sample_from_anchor = fake_build  # type: ignore[method-assign]
-    sample = dataset[0]
-    assert sample["sample_metadata"]["anchor_id"] == "b0"
-    assert seen == ["a0", "a1", "b0"]
+    with pytest.raises(ValueError, match="insufficient_target_policy"):
+        CrossResolutionWSIDataset(
+            anchor_catalog_manifest=str(anchor_manifest),
+            context_mpp=1.0,
+            target_mpp=0.5,
+            context_fov_um=64.0,
+            target_fov_um=16.0,
+            patch_size=16,
+            targets_per_context=4,
+            seed=0,
+            insufficient_target_policy="skip_slide",
+        )
 
 
 def test_getitem_lower_threshold_policy_relaxes_threshold_until_success(tmp_path):
@@ -500,7 +488,7 @@ def test_getitem_lower_threshold_policy_relaxes_threshold_until_success(tmp_path
     )
 
     dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(anchor_csv),
+        anchor_catalog_manifest=str(anchor_csv),
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
@@ -547,7 +535,7 @@ def test_getitem_lower_threshold_policy_raises_if_no_threshold_works(tmp_path):
     )
 
     dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(anchor_csv),
+        anchor_catalog_manifest=str(anchor_csv),
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
@@ -583,7 +571,7 @@ def test_sample_metadata_uses_effective_mpp_terminology(tmp_path):
     )
 
     dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(anchor_csv),
+        anchor_catalog_manifest=str(anchor_csv),
         context_mpp=1.0,
         target_mpp=0.5,
         context_fov_um=64.0,
@@ -626,7 +614,16 @@ def test_sample_metadata_uses_effective_mpp_terminology(tmp_path):
     )
 
     sample = dataset._build_sample_from_anchor(
-        anchor=dataset.anchors[0],
+        anchor={
+            "anchor_id": "a0",
+            "slide_id": "slideA",
+            "wsi_path": "/tmp/a.tif",
+            "mask_path": "",
+            "center_x_level0": 32,
+            "center_y_level0": 32,
+            "wsi_level0_spacing_mpp": 0.25,
+            "target_margin_um": 8.0,
+        },
         index=0,
         anchor_attempt=0,
     )

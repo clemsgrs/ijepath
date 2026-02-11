@@ -379,7 +379,7 @@ def main(
     pin_mem = args["data"]["pin_mem"]
     num_workers = args["data"]["num_workers"]
 
-    anchor_catalog_csv = args["data"]["anchor_catalog_csv"]
+    anchor_catalog_manifest = args["data"]["anchor_catalog_manifest"]
     context_mpp = float(args["data"]["context_mpp"])
     target_mpp = float(args["data"]["target_mpp"])
     context_fov_um = float(args["data"]["context_fov_um"])
@@ -396,6 +396,12 @@ def main(
         min_target_tissue_fraction_floor = float(min_target_tissue_fraction_floor)
     min_target_tissue_fraction_step = float(args["data"].get("min_target_tissue_fraction_step", 0.05))
     align_targets_to_patch_grid = args["data"].get("align_targets_to_patch_grid", False)
+    sampling_strategy = str(args["data"].get("sampling_strategy", "stratified_weighted"))
+    sampling_stratum_key = str(args["data"].get("sampling_stratum_key", "organ"))
+    sampling_stratum_weights = args["data"].get("sampling_stratum_weights", "inverse_frequency")
+    persistent_workers = bool(args["data"].get("persistent_workers", True))
+    prefetch_factor = int(args["data"].get("prefetch_factor", 4))
+    max_open_slides_per_worker = int(args["data"].get("max_open_slides_per_worker", 16))
     wsi_backend = str(args["data"].get("wsi_backend", "asap"))
     low_anchor_pass_warning_threshold = float(args["data"].get("low_anchor_pass_warning_threshold", 1.0))
     high_anchor_pass_warning_threshold = float(args["data"].get("high_anchor_pass_warning_threshold", 5.0))
@@ -553,7 +559,7 @@ def main(
         world_size=world_size,
         rank=rank,
         drop_last=True,
-        anchor_catalog_csv=anchor_catalog_csv,
+        anchor_catalog_manifest=anchor_catalog_manifest,
         patch_size=patch_size,
         context_mpp=context_mpp,
         target_mpp=target_mpp,
@@ -570,6 +576,12 @@ def main(
         num_enc_masks=num_enc_masks,
         backend=wsi_backend,
         align_targets_to_patch_grid=align_targets_to_patch_grid,
+        sampling_strategy=sampling_strategy,
+        sampling_stratum_key=sampling_stratum_key,
+        sampling_stratum_weights=sampling_stratum_weights,
+        persistent_workers=persistent_workers,
+        prefetch_factor=prefetch_factor,
+        max_open_slides_per_worker=max_open_slides_per_worker,
     )
     ipe = len(unsupervised_loader)
     if ipe <= 0:
@@ -688,7 +700,11 @@ def main(
     if tuning_enabled_cfg and tune_interval_images <= 0:
         raise ValueError("tuning.schedule.interval_images must be > 0")
     run_baseline_at_zero = bool(tuning_schedule_cfg.get("run_baseline_at_zero", True))
-    anchor_count = int(len(getattr(unsupervised_dataset, "anchors", [])) or len(unsupervised_dataset))
+    anchor_count = int(
+        getattr(unsupervised_dataset, "total_anchors", 0)
+        or len(getattr(unsupervised_dataset, "anchors", []))
+        or len(unsupervised_dataset)
+    )
     anchor_budget = compute_anchor_pass_budget(
         anchor_count=anchor_count,
         total_images_budget=total_images_budget,
@@ -792,7 +808,8 @@ def main(
             current_pass_index = int(pass_index + 1)
             if hasattr(unsupervised_dataset, "set_pass_index"):
                 unsupervised_dataset.set_pass_index(pass_index)
-            unsupervised_sampler.set_epoch(pass_index)
+            if unsupervised_sampler is not None and hasattr(unsupervised_sampler, "set_epoch"):
+                unsupervised_sampler.set_epoch(pass_index)
 
             loss_meter = AverageMeter()
             maskA_meter = AverageMeter()
@@ -823,9 +840,15 @@ def main(
                 leave=False,
                 disable=rank != 0,
             ) as iter_bar:
-                for itr, (batch_data, masks_enc, masks_pred) in enumerate(unsupervised_loader):
+                loader_iter = iter(unsupervised_loader)
+                for itr in range(ipe):
                     if steps_done >= total_steps or should_stop_training:
                         break
+                    try:
+                        batch_data, masks_enc, masks_pred = next(loader_iter)
+                    except StopIteration:
+                        loader_iter = iter(unsupervised_loader)
+                        batch_data, masks_enc, masks_pred = next(loader_iter)
 
                     context_imgs = batch_data["context_images"].to(device, non_blocking=True)
                     target_imgs = batch_data["target_images"].to(device, non_blocking=True)

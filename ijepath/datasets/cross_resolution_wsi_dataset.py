@@ -1,17 +1,22 @@
-import csv
+from __future__ import annotations
+
+import hashlib
+import json
 import math
+from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 import cv2
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import IterableDataset, get_worker_info
 
 from ijepath.datasets.wsi_readers.wholeslidedata_reader_adapter import (
     WholeSlideDataReaderAdapter,
     spacing_pixels_to_level0_pixels,
 )
+from ijepath.utils.parquet import require_pyarrow
 
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -32,12 +37,12 @@ def snap_size_to_patch_multiple(size_px: int, patch_size: int) -> int:
     return int(upper)
 
 
-class CrossResolutionWSIDataset(Dataset):
-    """Online context/target extraction dataset from a profile-specific anchor catalog."""
+class CrossResolutionWSIDataset(IterableDataset):
+    """Manifest-driven iterable dataset for online context/target extraction."""
 
     def __init__(
         self,
-        anchor_catalog_csv: str,
+        anchor_catalog_manifest: str,
         context_mpp: float,
         target_mpp: float,
         context_fov_um: float,
@@ -52,8 +57,15 @@ class CrossResolutionWSIDataset(Dataset):
         min_target_tissue_fraction_step: float = 0.05,
         backend: str = "asap",
         align_targets_to_patch_grid: bool = False,
+        world_size: int = 1,
+        rank: int = 0,
+        sampling_strategy: str = "stratified_weighted",
+        sampling_stratum_key: str = "organ",
+        sampling_stratum_weights: str | dict = "inverse_frequency",
+        max_open_slides_per_worker: int = 16,
     ) -> None:
-        self.anchor_catalog_csv = str(anchor_catalog_csv)
+        super().__init__()
+        self.anchor_catalog_manifest = str(anchor_catalog_manifest)
         self.context_mpp = float(context_mpp)
         self.target_mpp = float(target_mpp)
         self.context_fov_um = float(context_fov_um)
@@ -72,8 +84,14 @@ class CrossResolutionWSIDataset(Dataset):
         self.min_target_tissue_fraction_step = float(min_target_tissue_fraction_step)
         self.backend = backend
         self.align_targets_to_patch_grid = align_targets_to_patch_grid
+        self.world_size = max(1, int(world_size))
+        self.rank = int(rank)
+        self.sampling_strategy = str(sampling_strategy)
+        self.sampling_stratum_key = str(sampling_stratum_key)
+        self.sampling_stratum_weights = sampling_stratum_weights
+        self.max_open_slides_per_worker = max(1, int(max_open_slides_per_worker))
 
-        valid_policies = {"skip_anchor", "skip_slide", "lower_threshold"}
+        valid_policies = {"skip_anchor", "lower_threshold"}
         if self.insufficient_target_policy not in valid_policies:
             raise ValueError(
                 "insufficient_target_policy must be one of "
@@ -103,27 +121,29 @@ class CrossResolutionWSIDataset(Dataset):
             int(round(self.target_fov_um / self.context_effective_mpp)),
         )
 
-        self.anchors = self._load_anchor_rows(Path(self.anchor_catalog_csv))
-        if not self.anchors:
-            raise ValueError(f"No anchors found in catalog: {self.anchor_catalog_csv}")
+        manifest = json.loads(Path(self.anchor_catalog_manifest).read_text(encoding="utf-8"))
+        self.total_anchors = int(manifest.get("total_anchors", 0))
+        if self.total_anchors <= 0:
+            raise ValueError(f"No anchors found in manifest: {self.anchor_catalog_manifest}")
+        self.anchor_shards = [dict(x) for x in manifest.get("anchor_shards", [])]
+        if not self.anchor_shards:
+            raise ValueError(f"Manifest has no shard entries: {self.anchor_catalog_manifest}")
+        self.stratum_counts = {
+            str(k): int(v)
+            for k, v in dict(manifest.get("stratum_counts", {}) or {}).items()
+        }
+
         self.current_pass_index = 0
-        self._reader_cache: Dict[str, WholeSlideDataReaderAdapter] = {}
+        self._reader_cache: OrderedDict[str, WholeSlideDataReaderAdapter] = OrderedDict()
         self._resolution_plan_cache: Dict[str, dict] = {}
 
-    def _load_anchor_rows(self, path: Path) -> List[dict]:
-        with path.open("r", newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            return [dict(row) for row in reader]
-
     def __len__(self) -> int:
-        return len(self.anchors)
+        return max(1, int(math.ceil(float(self.total_anchors) / float(max(1, self.world_size)))))
 
     def set_pass_index(self, pass_index: int) -> None:
         self.current_pass_index = int(pass_index)
 
     def _rng_seed_for(self, index: int, anchor_attempt: int) -> int:
-        # Pass-aware seeding ensures repeated indices can yield different
-        # target placements across anchor passes while remaining deterministic.
         return (
             int(self.seed)
             + int(index)
@@ -131,15 +151,29 @@ class CrossResolutionWSIDataset(Dataset):
             + int(self.current_pass_index) * 10_000_019
         )
 
+    def _partition_for_anchor(self, anchor_id: str, total_partitions: int) -> int:
+        digest = hashlib.blake2b(anchor_id.encode("utf-8"), digest_size=8).digest()
+        return int.from_bytes(digest, byteorder="little", signed=False) % int(total_partitions)
+
     def _get_reader(self, row: dict) -> WholeSlideDataReaderAdapter:
-        slide_id = row["slide_id"]
-        if slide_id not in self._reader_cache:
-            self._reader_cache[slide_id] = WholeSlideDataReaderAdapter(
-                wsi_path=row["wsi_path"],
-                mask_path=row.get("mask_path"),
-                backend=self.backend,
-            )
-        return self._reader_cache[slide_id]
+        slide_id = str(row["slide_id"])
+        cached = self._reader_cache.pop(slide_id, None)
+        if cached is not None:
+            self._reader_cache[slide_id] = cached
+            return cached
+
+        adapter = WholeSlideDataReaderAdapter(
+            wsi_path=str(row["wsi_path"]),
+            mask_path=row.get("mask_path"),
+            backend=self.backend,
+        )
+        self._reader_cache[slide_id] = adapter
+        while len(self._reader_cache) > int(self.max_open_slides_per_worker):
+            _, evicted = self._reader_cache.popitem(last=False)
+            close_fn = getattr(evicted, "close", None)
+            if callable(close_fn):
+                close_fn()
+        return adapter
 
     def _to_rgb(self, image: np.ndarray) -> np.ndarray:
         if image.ndim == 2:
@@ -382,70 +416,6 @@ class CrossResolutionWSIDataset(Dataset):
                 tissue_fractions.append(float(tissue_fraction))
 
         if len(boxes) < self.targets_per_context:
-            # Deterministic fallback: evaluate a dense grid and greedily keep highest-coverage boxes.
-            candidates: list[tuple[float, np.ndarray, Optional[float]]] = []
-
-            if self.align_targets_to_patch_grid:
-                bounds = _aligned_x0_bounds()
-                if bounds is not None:
-                    min_x0, max_x0 = bounds
-                    min_y0, max_y0 = bounds
-                    start_x0 = ((min_x0 + patch - 1) // patch) * patch
-                    start_y0 = ((min_y0 + patch - 1) // patch) * patch
-                    x0_values = np.arange(start_x0, max_x0 + 1, patch, dtype=np.int32)
-                    y0_values = np.arange(start_y0, max_y0 + 1, patch, dtype=np.int32)
-                    for y0 in y0_values:
-                        for x0 in x0_values:
-                            box = np.array(
-                                [
-                                    int(x0),
-                                    int(y0),
-                                    int(x0) + int(target_size_context_px),
-                                    int(y0) + int(target_size_context_px),
-                                ],
-                                dtype=np.float32,
-                            )
-                            if not self._is_in_bounds(box, context_size_px):
-                                continue
-                            tissue_fraction = self._box_tissue_fraction(context_tissue_mask, box)
-                            if tissue_fraction is not None and tissue_fraction < threshold:
-                                continue
-                            score = 1.0 if tissue_fraction is None else float(tissue_fraction)
-                            candidates.append((score, box, tissue_fraction))
-            else:
-                grid_side = max(3, int(np.ceil(np.sqrt(self.targets_per_context * 8))))
-                centers = np.linspace(min_center, max_center, num=grid_side, dtype=np.int32)
-                for cy in centers:
-                    for cx in centers:
-                        box = self._make_box_from_center(
-                            center_x=int(cx),
-                            center_y=int(cy),
-                            target_size_context_px=target_size_context_px,
-                        )
-                        if not self._is_in_bounds(box, context_size_px):
-                            continue
-                        tissue_fraction = self._box_tissue_fraction(context_tissue_mask, box)
-                        if tissue_fraction is not None and tissue_fraction < threshold:
-                            continue
-                        score = 1.0 if tissue_fraction is None else float(tissue_fraction)
-                        candidates.append((score, box, tissue_fraction))
-
-            candidates.sort(key=lambda x: x[0], reverse=True)
-            for _, box, tissue_fraction in candidates:
-                if len(boxes) >= self.targets_per_context:
-                    break
-                if self._overlaps_too_much(
-                    candidate=box,
-                    selected_boxes=boxes,
-                    max_overlap_ratio=0.25,
-                    target_size_context_px=target_size_context_px,
-                ):
-                    continue
-                boxes.append(box)
-                if tissue_fraction is not None:
-                    tissue_fractions.append(float(tissue_fraction))
-
-        if len(boxes) < self.targets_per_context:
             return None
 
         return (
@@ -466,7 +436,7 @@ class CrossResolutionWSIDataset(Dataset):
             else float(min_target_tissue_fraction)
         )
         reader = self._get_reader(anchor)
-        slide_id = anchor["slide_id"]
+        slide_id = str(anchor["slide_id"])
         resolution_plan = self._get_resolution_plan(
             slide_id=slide_id,
             reader=reader,
@@ -567,8 +537,8 @@ class CrossResolutionWSIDataset(Dataset):
             "target_images": target_tensors,
             "target_boxes_in_context_pixels": torch.as_tensor(boxes_context_px, dtype=torch.float32),
             "sample_metadata": {
-                "slide_id": anchor["slide_id"],
-                "anchor_id": anchor["anchor_id"],
+                "slide_id": slide_id,
+                "anchor_id": str(anchor["anchor_id"]),
                 "anchor_retry_offset": int(anchor_attempt),
                 "dataset_pass_index": int(self.current_pass_index),
                 "requested_context_mpp": self.context_mpp,
@@ -592,6 +562,7 @@ class CrossResolutionWSIDataset(Dataset):
                 "min_target_tissue_fraction": active_threshold,
                 "configured_min_target_tissue_fraction": self.min_target_tissue_fraction,
                 "align_targets_to_patch_grid": self.align_targets_to_patch_grid,
+                "stratum_id": str(anchor.get("stratum_id", "unknown")),
             },
         }
 
@@ -619,69 +590,210 @@ class CrossResolutionWSIDataset(Dataset):
             deduped.append(float(key))
         return deduped
 
-    def _ordered_anchor_indices(self, index: int) -> list[int]:
-        num_anchors = len(self.anchors)
-        return [(index + offset) % num_anchors for offset in range(num_anchors)]
+    def _parse_sampling_weights(self) -> dict[str, float] | str:
+        if isinstance(self.sampling_stratum_weights, dict):
+            return {str(k): float(v) for k, v in self.sampling_stratum_weights.items()}
+        if isinstance(self.sampling_stratum_weights, str):
+            raw = self.sampling_stratum_weights.strip()
+            if raw.lower() in {"inverse_frequency", "uniform"}:
+                return raw.lower()
+            if raw.startswith("{"):
+                parsed = json.loads(raw)
+                if not isinstance(parsed, dict):
+                    raise ValueError("sampling_stratum_weights JSON must decode to an object")
+                return {str(k): float(v) for k, v in parsed.items()}
+            return raw.lower()
+        raise ValueError("Unsupported sampling_stratum_weights type")
 
-    def _grouped_anchor_indices_by_slide(self, index: int) -> list[list[int]]:
-        ordered_indices = self._ordered_anchor_indices(index)
-        slide_order: list[str] = []
-        grouped: dict[str, list[int]] = {}
-        for anchor_idx in ordered_indices:
-            slide_id = str(self.anchors[anchor_idx]["slide_id"])
-            if slide_id not in grouped:
-                grouped[slide_id] = []
-                slide_order.append(slide_id)
-            grouped[slide_id].append(anchor_idx)
-        return [grouped[slide_id] for slide_id in slide_order]
+    def _resolve_strata_and_weights(self) -> tuple[list[str], np.ndarray]:
+        if self.sampling_strategy == "global_uniform":
+            return ["__all__"], np.asarray([1.0], dtype=np.float64)
+
+        if not self.stratum_counts:
+            return ["unknown"], np.asarray([1.0], dtype=np.float64)
+
+        strata = sorted(str(k) for k in self.stratum_counts.keys())
+        mode_or_map = self._parse_sampling_weights()
+
+        weights: list[float] = []
+        if mode_or_map == "uniform":
+            weights = [1.0 for _ in strata]
+        elif mode_or_map == "inverse_frequency":
+            for stratum in strata:
+                count = max(1, int(self.stratum_counts.get(stratum, 0)))
+                weights.append(1.0 / float(count))
+        elif isinstance(mode_or_map, dict):
+            for stratum in strata:
+                weights.append(float(mode_or_map.get(stratum, 0.0)))
+        else:
+            raise ValueError(
+                "sampling_stratum_weights must be 'inverse_frequency', 'uniform', or a map"
+            )
+
+        weights_arr = np.asarray(weights, dtype=np.float64)
+        if np.any(weights_arr < 0):
+            raise ValueError("sampling_stratum_weights cannot include negative values")
+        if float(weights_arr.sum()) <= 0:
+            weights_arr = np.asarray([1.0 for _ in strata], dtype=np.float64)
+        weights_arr = weights_arr / weights_arr.sum()
+        return strata, weights_arr
+
+    def _iter_anchor_rows_for_stratum(
+        self,
+        requested_stratum: str | None,
+        partition_id: int,
+        total_partitions: int,
+        rng: np.random.Generator,
+        repeat: bool = True,
+    ) -> Iterator[dict]:
+        _, pq, _ = require_pyarrow()
+
+        eligible_shards = []
+        for shard in self.anchor_shards:
+            stratum_counts = dict(shard.get("stratum_counts", {}) or {})
+            if requested_stratum is not None and int(stratum_counts.get(requested_stratum, 0)) <= 0:
+                continue
+            eligible_shards.append(dict(shard))
+
+        if not eligible_shards:
+            return
+
+        while True:
+            order = list(range(len(eligible_shards)))
+            rng.shuffle(order)
+            produced = 0
+
+            for idx in order:
+                shard = eligible_shards[idx]
+                parquet_file = pq.ParquetFile(str(shard["path"]))
+                for batch in parquet_file.iter_batches(batch_size=2048):
+                    columns = batch.to_pydict()
+                    if not columns:
+                        continue
+                    first_col = next(iter(columns.values()))
+                    row_count = len(first_col)
+                    for row_idx in range(row_count):
+                        row = {k: columns[k][row_idx] for k in columns.keys()}
+                        anchor_id = str(row.get("anchor_id", ""))
+                        if not anchor_id:
+                            continue
+                        if requested_stratum is not None and str(row.get("stratum_id", "unknown")) != requested_stratum:
+                            continue
+                        if self._partition_for_anchor(anchor_id, total_partitions) != partition_id:
+                            continue
+                        produced += 1
+                        yield row
+
+            if produced == 0:
+                return
+            if not repeat:
+                return
+
+    def _build_sample_with_policy(self, anchor: dict, index: int) -> Optional[dict]:
+        thresholds = self._iter_target_thresholds()
+        for threshold in thresholds:
+            sample = self._build_sample_from_anchor(
+                anchor=anchor,
+                index=index,
+                anchor_attempt=0,
+                min_target_tissue_fraction=threshold,
+            )
+            if sample is None:
+                continue
+            sample["sample_metadata"]["effective_min_target_tissue_fraction"] = float(threshold)
+            sample["sample_metadata"]["insufficient_target_policy"] = self.insufficient_target_policy
+            sample["sample_metadata"]["threshold_schedule"] = thresholds
+            sample["sample_metadata"]["anchors_attempted_at_threshold"] = 1
+            return sample
+        return None
+
+    def __iter__(self):
+        worker = get_worker_info()
+        worker_id = int(worker.id) if worker is not None else 0
+        num_workers = int(worker.num_workers) if worker is not None else 1
+
+        partition_id = int(self.rank) * int(num_workers) + int(worker_id)
+        total_partitions = int(self.world_size) * int(num_workers)
+
+        base_seed = (
+            int(self.seed)
+            + int(self.current_pass_index) * 1_000_003
+            + int(partition_id) * 7_919
+        )
+        rng = np.random.default_rng(base_seed)
+
+        strata, weights = self._resolve_strata_and_weights()
+        per_stratum_iters: dict[str, Iterator[dict]] = {}
+        for stratum in strata:
+            requested_stratum = None if stratum == "__all__" else stratum
+            per_stratum_iters[stratum] = self._iter_anchor_rows_for_stratum(
+                requested_stratum=requested_stratum,
+                partition_id=partition_id,
+                total_partitions=total_partitions,
+                rng=rng,
+            )
+
+        sample_index = 0
+        while True:
+            chosen_idx = int(rng.choice(len(strata), p=weights))
+            chosen_stratum = strata[chosen_idx]
+            it = per_stratum_iters[chosen_stratum]
+
+            try:
+                anchor = next(it)
+            except StopIteration:
+                requested_stratum = None if chosen_stratum == "__all__" else chosen_stratum
+                it = self._iter_anchor_rows_for_stratum(
+                    requested_stratum=requested_stratum,
+                    partition_id=partition_id,
+                    total_partitions=total_partitions,
+                    rng=rng,
+                )
+                per_stratum_iters[chosen_stratum] = it
+                try:
+                    anchor = next(it)
+                except StopIteration:
+                    continue
+
+            sample = self._build_sample_with_policy(anchor=anchor, index=sample_index)
+            sample_index += 1
+            if sample is None:
+                continue
+            yield sample
 
     def __getitem__(self, index: int):
-        thresholds = self._iter_target_thresholds()
+        if index < 0:
+            raise IndexError("index must be >= 0")
 
-        for threshold in thresholds:
-            if self.insufficient_target_policy == "skip_slide":
-                grouped_anchor_indices = self._grouped_anchor_indices_by_slide(index)
-                attempted_anchors = 0
-                exhausted_slides = 0
-                for group in grouped_anchor_indices:
-                    for anchor_idx in group:
-                        anchor = self.anchors[anchor_idx]
-                        sample = self._build_sample_from_anchor(
-                            anchor=anchor,
-                            index=index,
-                            anchor_attempt=attempted_anchors,
-                            min_target_tissue_fraction=threshold,
-                        )
-                        attempted_anchors += 1
-                        if sample is None:
-                            continue
-                        sample["sample_metadata"]["effective_min_target_tissue_fraction"] = float(threshold)
-                        sample["sample_metadata"]["insufficient_target_policy"] = self.insufficient_target_policy
-                        sample["sample_metadata"]["threshold_schedule"] = thresholds
-                        sample["sample_metadata"]["anchors_attempted_at_threshold"] = attempted_anchors
-                        sample["sample_metadata"]["slides_exhausted_before_success"] = exhausted_slides
-                        return sample
-                    exhausted_slides += 1
-                continue
+        worker = get_worker_info()
+        worker_id = int(worker.id) if worker is not None else 0
+        num_workers = int(worker.num_workers) if worker is not None else 1
+        partition_id = int(self.rank) * int(num_workers) + int(worker_id)
+        total_partitions = int(self.world_size) * int(num_workers)
 
-            ordered_indices = self._ordered_anchor_indices(index)
-            for attempted_anchors, anchor_idx in enumerate(ordered_indices, start=1):
-                anchor = self.anchors[anchor_idx]
-                sample = self._build_sample_from_anchor(
-                    anchor=anchor,
-                    index=index,
-                    anchor_attempt=attempted_anchors - 1,
-                    min_target_tissue_fraction=threshold,
-                )
-                if sample is not None:
-                    sample["sample_metadata"]["effective_min_target_tissue_fraction"] = float(threshold)
-                    sample["sample_metadata"]["insufficient_target_policy"] = self.insufficient_target_policy
-                    sample["sample_metadata"]["threshold_schedule"] = thresholds
-                    sample["sample_metadata"]["anchors_attempted_at_threshold"] = attempted_anchors
-                    return sample
+        rng = np.random.default_rng(int(self.seed) + int(self.current_pass_index) * 1_000_003 + int(partition_id) * 7_919)
+        anchors: list[dict] = []
+        anchors.extend(
+            self._iter_anchor_rows_for_stratum(
+                requested_stratum=None,
+                partition_id=partition_id,
+                total_partitions=total_partitions,
+                rng=rng,
+                repeat=False,
+            )
+        )
+        if not anchors:
+            raise RuntimeError("No anchors available for current partition.")
+
+        start = int(index) % len(anchors)
+        for offset in range(len(anchors)):
+            anchor = anchors[(start + offset) % len(anchors)]
+            sample = self._build_sample_with_policy(anchor=anchor, index=index + offset)
+            if sample is not None:
+                return sample
 
         raise RuntimeError(
             "Could not sample enough target boxes for index="
             f"{index} after trying policy={self.insufficient_target_policy}, "
-            f"thresholds={thresholds}, anchors={len(self.anchors)}."
+            f"anchors={len(anchors)}."
         )

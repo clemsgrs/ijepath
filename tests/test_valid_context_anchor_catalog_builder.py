@@ -1,19 +1,28 @@
 import csv
+import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
+
+if importlib.util.find_spec("pyarrow") is None:
+    pytest.skip("pyarrow is required for parquet pipeline tests", allow_module_level=True)
 
 
 def test_pathology_valid_context_anchor_catalog_builder_smoke(tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
     manifest = tmp_path / "manifest.csv"
-    slide_index = tmp_path / "slide_metadata_index.jsonl"
+    slide_index = tmp_path / "slide_metadata.parquet"
     report_csv = tmp_path / "slide_metadata_build_report.csv"
     profile_yaml = tmp_path / "profile.yaml"
-    anchors_csv = tmp_path / "anchors.csv"
+    anchor_manifest = tmp_path / "anchor_catalog_manifest.json"
 
     wsi_path = repo_root / "data/tcga-prad/wsi/TCGA-HC-8257.tif"
     mask_path = repo_root / "data/tcga-prad/tissue-masks/TCGA-HC-8257.tif"
+    if not wsi_path.exists() or not mask_path.exists():
+        pytest.skip("WSI test data is not available")
 
     with manifest.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["slide_id", "wsi_path", "mask_path"])
@@ -74,7 +83,7 @@ def test_pathology_valid_context_anchor_catalog_builder_smoke(tmp_path):
             "--profile",
             str(profile_yaml),
             "--output",
-            str(anchors_csv),
+            str(anchor_manifest),
         ],
         cwd=repo_root,
         check=False,
@@ -83,16 +92,20 @@ def test_pathology_valid_context_anchor_catalog_builder_smoke(tmp_path):
     )
 
     assert build_anchors.returncode == 0, build_anchors.stderr
-    assert anchors_csv.exists()
+    assert anchor_manifest.exists()
 
-    with anchors_csv.open("r", newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
+    manifest = json.loads(anchor_manifest.read_text(encoding="utf-8"))
+    assert int(manifest["total_anchors"]) > 0, "Expected at least one valid anchor"
+    assert manifest["profile"]["profile_id"] == "ctx1p0_tgt0p5_fov512um_k4"
 
-    assert rows, "Expected at least one valid anchor"
-    row = rows[0]
+    import pyarrow.parquet as pq
+
+    first_shard = Path(manifest["anchor_shards"][0]["path"])
+    rows = pq.read_table(str(first_shard)).to_pylist()
+    row = dict(rows[0])
     assert row["slide_id"] == "TCGA-HC-8257"
     assert row["profile_id"] == "ctx1p0_tgt0p5_fov512um_k4"
     assert float(row["context_mpp"]) == 1.0
     assert float(row["target_mpp"]) == 0.5
     assert float(row["tissue_fraction"]) >= 0.2
-    assert row["is_in_bounds"] == "1"
+    assert int(row["is_in_bounds"]) == 1

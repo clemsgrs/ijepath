@@ -20,8 +20,7 @@ Standard SSL in pathology can overfit stain/scanner shortcuts. This project targ
 - Add optional I-JEPA-style variable target geometry (per-target size and aspect ratio), first as an ablation against fixed-square baseline.
 
 ## Docs
-- `docs/pathology/README.md`
-- `docs/pathology/config-reference.md`
+- `docs/scalable_pipeline_cutover.md`
 
 ## Sample curation pipeline
 <img src="assets/ijepath_flow.gif" alt="TCGA-HC-8257 anchor A001 cross-resolution flow" width="920" />
@@ -34,8 +33,10 @@ Use any dataset root; below is the expected structure and contracts:
   manifests/
     slides_with_tissue_masks.csv
   indexes/
-    slide_metadata_index.jsonl
-    anchors_<profile>.csv
+    slide_metadata.parquet
+    anchor_catalog_manifest.json
+    anchors/
+      part-*.parquet
 ```
 
 Manifest CSV format (`slides_with_tissue_masks.csv`):
@@ -54,22 +55,29 @@ python scripts/verify_training_runtime.py
 # 2) Build slide metadata index
 python scripts/build_slide_metadata_index_from_manifest.py \
   --manifest ${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
-  --output ${DATA_ROOT}/indexes/slide_metadata_index.jsonl \
+  --output ${DATA_ROOT}/indexes/slide_metadata.parquet \
   --report ${DATA_ROOT}/indexes/slide_metadata_build_report.csv
 
 # 3) Build profile-specific anchor catalog
 python scripts/build_valid_context_anchor_catalog.py \
-  --slide-index ${DATA_ROOT}/indexes/slide_metadata_index.jsonl \
+  --slide-index ${DATA_ROOT}/indexes/slide_metadata.parquet \
   --profile configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
-  --output ${DATA_ROOT}/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv
+  --output ${DATA_ROOT}/indexes/anchor_catalog_manifest.json
 
 # 4) Smoke training (layered config: defaults + profile + run)
 CUDA_VISIBLE_DEVICES=0 python main.py \
   --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
   --run-config configs/runs/tcga_prad_smoke.yaml \
   data.slide_manifest_csv=${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
-  data.slide_metadata_index_jsonl=${DATA_ROOT}/indexes/slide_metadata_index.jsonl \
-  data.anchor_catalog_csv=${DATA_ROOT}/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv
+  data.slide_metadata_parquet=${DATA_ROOT}/indexes/slide_metadata.parquet \
+  data.anchor_catalog_manifest=${DATA_ROOT}/indexes/anchor_catalog_manifest.json
+
+# OR one-command orchestration (build index + build anchors + train)
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
+  --run-config configs/runs/tcga_prad_smoke.yaml \
+  --manifest-csv ${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
+  --pipeline-output-folder ${DATA_ROOT}/outputs/full-pipeline
 
 # defaults config is implicit: configs/defaults.yaml
 
@@ -84,7 +92,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 ## Diversity budget
 
 Training is image-budget driven, and data diversity is reported as anchor passes:
-- `anchor_count = len(anchor_catalog_csv)`
+- `anchor_count = manifest.total_anchors`
 - `anchor_passes_total = total_images_budget / anchor_count`
 - `coverage_first_pass = min(1, total_images_budget / anchor_count)`
 - `mean_anchor_reuse = max(0, total_images_budget / anchor_count - 1)`
@@ -107,8 +115,8 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
   --run-config configs/runs/pathorob_camelyon_image_budget.yaml \
   data.slide_manifest_csv=${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
-  data.slide_metadata_index_jsonl=${DATA_ROOT}/indexes/slide_metadata_index.jsonl \
-  data.anchor_catalog_csv=${DATA_ROOT}/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv \
+  data.slide_metadata_parquet=${DATA_ROOT}/indexes/slide_metadata.parquet \
+  data.anchor_catalog_manifest=${DATA_ROOT}/indexes/anchor_catalog_manifest.json \
   tuning.plugins[0].datasets.camelyon.manifest_csv=${DATA_ROOT}/pathorob/camelyon_manifest.csv
 ```
 
@@ -122,7 +130,7 @@ Checkpoint semantics:
 ## Preview generation
 ```bash
 python scripts/preview_context_targets.py \
-  --anchor-catalog ${DATA_ROOT}/indexes/anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv \
+  --anchor-catalog ${DATA_ROOT}/indexes/anchor_catalog_manifest.json \
   --output-dir outputs/previews \
   --num-samples 8
 ```
@@ -137,6 +145,14 @@ Outputs per sample:
 ```bash
 pytest tests
 pytest -m integration tests/test_pipeline_integration.py
+```
+
+## Benchmarking
+```bash
+python scripts/benchmark_data_pipeline.py --mode index \
+  --manifest ${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
+  --slide-metadata ${DATA_ROOT}/indexes/slide_metadata.parquet \
+  --anchor-manifest ${DATA_ROOT}/indexes/anchor_catalog_manifest.json
 ```
 
 ## Notes

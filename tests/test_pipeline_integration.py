@@ -1,10 +1,15 @@
 import csv
+import importlib.util
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+if importlib.util.find_spec("pyarrow") is None:
+    pytest.skip("pyarrow is required for parquet pipeline tests", allow_module_level=True)
 
 
 def _run(cmd: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -43,9 +48,9 @@ def test_end_to_end_fixture_smoke(tmp_path: Path):
         encoding="utf-8",
     )
 
-    slide_index_jsonl = indexes_dir / "slide_metadata_index.jsonl"
+    slide_index_jsonl = indexes_dir / "slide_metadata.parquet"
     slide_report_csv = indexes_dir / "slide_metadata_build_report.csv"
-    anchor_catalog_csv = indexes_dir / "anchors_profile_ctx1p0_tgt0p5_fov512um_k4.csv"
+    anchor_catalog_manifest = indexes_dir / "anchor_catalog_manifest.json"
     anchor_report_csv = indexes_dir / "anchor_catalog_build_report.csv"
 
     env = os.environ.copy()
@@ -82,17 +87,16 @@ def test_end_to_end_fixture_smoke(tmp_path: Path):
             "--profile",
             str(repo_root / "configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml"),
             "--output",
-            str(anchor_catalog_csv),
+            str(anchor_catalog_manifest),
         ],
         env=env,
     )
-    assert anchor_catalog_csv.exists(), "anchor catalog was not created"
+    assert anchor_catalog_manifest.exists(), "anchor catalog was not created"
     assert anchor_report_csv.exists(), "anchor report was not created"
 
-    with anchor_catalog_csv.open("r", newline="", encoding="utf-8") as f:
-        anchor_rows = list(csv.DictReader(f))
-    assert len(anchor_rows) > 0
-    assert all(r["profile_id"] == "ctx1p0_tgt0p5_fov512um_k4" for r in anchor_rows)
+    manifest = json.loads(anchor_catalog_manifest.read_text(encoding="utf-8"))
+    assert int(manifest["total_anchors"]) > 0
+    assert str(manifest["profile"]["profile_id"]) == "ctx1p0_tgt0p5_fov512um_k4"
 
     train_out_dir = outputs_dir / "test-fixture-smoke"
     write_tag = "test-fixture-smoke"
@@ -105,8 +109,8 @@ def test_end_to_end_fixture_smoke(tmp_path: Path):
             "--run-config",
             str(repo_root / "configs/runs/smoke.yaml"),
             f"data.slide_manifest_csv={manifest_csv}",
-            f"data.slide_metadata_index_jsonl={slide_index_jsonl}",
-            f"data.anchor_catalog_csv={anchor_catalog_csv}",
+            f"data.slide_metadata_parquet={slide_index_jsonl}",
+            f"data.anchor_catalog_manifest={anchor_catalog_manifest}",
             "data.num_workers=0",
             "data.batch_size_per_gpu=2",
             f"logging.folder={train_out_dir}",

@@ -7,6 +7,7 @@ REQUIRED_MODULES = {
     "torchvision": "torchvision",
     "wholeslidedata": "wholeslidedata",
     "numpy": "numpy",
+    "pyarrow": "pyarrow",
     "opencv-python": "cv2",
     "pyyaml": "yaml",
     "omegaconf": "omegaconf",

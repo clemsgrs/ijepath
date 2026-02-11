@@ -6,6 +6,7 @@ tqdm
 wandb
 numpy<2
 pandas
+pyarrow
 scikit-learn
 opencv-python
 submitit

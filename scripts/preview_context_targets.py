@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import argparse
-import csv
+import json
 import math
 import re
 import sys
@@ -19,6 +19,7 @@ from ijepath.datasets.wsi_readers.wholeslidedata_reader_adapter import (
     WholeSlideDataReaderAdapter,
     spacing_pixels_to_level0_pixels,
 )
+from ijepath.utils.parquet import require_pyarrow
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -37,7 +38,7 @@ TARGET_COLORS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Preview context and target crops for pathology JEPA samples.")
-    parser.add_argument("--anchor-catalog", required=True, type=str, help="Path to anchor catalog CSV")
+    parser.add_argument("--anchor-catalog", required=True, type=str, help="Path to anchor catalog manifest JSON")
     parser.add_argument("--output-dir", required=True, type=str, help="Directory to write previews")
     parser.add_argument("--num-samples", type=int, default=8, help="Number of samples to visualize")
     parser.add_argument("--context-mpp", type=float, default=None)
@@ -74,23 +75,24 @@ def parse_args() -> argparse.Namespace:
 
 
 def read_profile_from_anchor_catalog(anchor_catalog: Path) -> dict:
-    with anchor_catalog.open("r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        first = next(reader)
+    manifest = json.loads(anchor_catalog.read_text(encoding="utf-8"))
+    profile = dict(manifest.get("profile", {}) or {})
     return {
-        "context_mpp": float(first["context_mpp"]),
-        "target_mpp": float(first["target_mpp"]),
-        "context_fov_um": float(first["context_fov_um"]),
-        "target_fov_um": float(first["target_fov_um"]),
-        "targets_per_context": int(first["targets_per_context"]),
+        "context_mpp": float(profile["context_mpp"]),
+        "target_mpp": float(profile["target_mpp"]),
+        "context_fov_um": float(profile["context_fov_um"]),
+        "target_fov_um": float(profile["target_fov_um"]),
+        "targets_per_context": int(profile["targets_per_context"]),
     }
 
 
 def read_anchor_rows(anchor_catalog: Path) -> dict[str, dict]:
+    manifest = json.loads(anchor_catalog.read_text(encoding="utf-8"))
+    _, pq, _ = require_pyarrow()
     rows: dict[str, dict] = {}
-    with anchor_catalog.open("r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
+    for shard in manifest.get("anchor_shards", []):
+        table = pq.read_table(str(shard["path"]))
+        for row in table.to_pylist():
             rows[str(row["anchor_id"])] = dict(row)
     return rows
 
@@ -680,7 +682,7 @@ def main() -> int:
     targets_per_context = args.targets_per_context if args.targets_per_context is not None else profile["targets_per_context"]
 
     dataset = CrossResolutionWSIDataset(
-        anchor_catalog_csv=str(anchor_catalog),
+        anchor_catalog_manifest=str(anchor_catalog),
         context_mpp=context_mpp,
         target_mpp=target_mpp,
         context_fov_um=context_fov_um,
@@ -690,6 +692,9 @@ def main() -> int:
         seed=args.seed,
         spacing_tolerance=args.spacing_tolerance,
         backend=args.wsi_backend,
+        sampling_strategy="global_uniform",
+        world_size=1,
+        rank=0,
     )
 
     thumbnail_cache: dict[str, dict] = {}
