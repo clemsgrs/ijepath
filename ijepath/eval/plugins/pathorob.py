@@ -70,6 +70,7 @@ class PathoROBPlugin(BenchmarkPlugin):
 
         self._manifest_cache: dict[str, pd.DataFrame] = {}
         self._apd_split_cache: dict[str, list[pd.DataFrame]] = {}
+        self._dataset_cache: dict[str, dict[str, object]] = {}
 
     def should_run(self, images_seen: int, eval_index: int) -> bool:
         tune_every_images = self.cfg.get("tune_every_images", None)
@@ -88,25 +89,61 @@ class PathoROBPlugin(BenchmarkPlugin):
         return df
 
     def _extract_features(self, teacher_backbone, manifest_df: pd.DataFrame) -> np.ndarray:
+        feature_num_workers = int(self.cfg.get("feature_num_workers", self.cfg.get("num_workers", 4)))
+        feature_persistent_workers = bool(self.cfg.get("feature_persistent_workers", True))
+        feature_prefetch_factor = int(self.cfg.get("feature_prefetch_factor", 4))
         dataset = EvalDataset(
             manifest_df,
             transform=self.transform,
             image_col="image_path",
             label_col="label",
         )
+        loader_kwargs: dict[str, object] = {}
+        if feature_num_workers > 0:
+            loader_kwargs["persistent_workers"] = bool(feature_persistent_workers)
+            loader_kwargs["prefetch_factor"] = int(feature_prefetch_factor)
         loader = torch.utils.data.DataLoader(
             dataset,
             sampler=torch.utils.data.SequentialSampler(dataset),
             batch_size=int(self.cfg.get("batch_size_per_gpu", 32)),
-            num_workers=int(self.cfg.get("num_workers", 4)),
+            num_workers=feature_num_workers,
             pin_memory=True,
             drop_last=False,
+            **loader_kwargs,
         )
         return extract_teacher_features_single_process(
             teacher=teacher_backbone,
             loader=loader,
             device=self.device,
         )
+
+    def _dataset_context(self, dataset_name: str, manifest_df: pd.DataFrame) -> dict[str, object]:
+        cached = self._dataset_cache.get(dataset_name)
+        if cached is not None:
+            return cached
+
+        ctx = {
+            "sample_to_idx": {sid: i for i, sid in enumerate(manifest_df["sample_id"].tolist())},
+            "label_codes": pd.factorize(manifest_df["label"])[0].astype(int),
+            "center_codes": pd.factorize(manifest_df["medical_center"])[0].astype(int),
+            "slide_ids": manifest_df["slide_id"].astype(str).to_numpy(),
+        }
+        self._dataset_cache[dataset_name] = ctx
+        return ctx
+
+    @staticmethod
+    def _metric_enabled(
+        metric_cfg: dict,
+        *,
+        eval_index: int,
+        default_every_n: int,
+    ) -> bool:
+        if not bool(metric_cfg.get("enable", True)):
+            return False
+        every_n = int(metric_cfg.get("every_n_evals", default_every_n))
+        if every_n <= 0:
+            return False
+        return int(eval_index) % int(every_n) == 0
 
     def _get_split_params(self, dataset_cfg: dict) -> dict:
         apd_cfg = dict(self.cfg.get("apd", {}) or {})
@@ -199,7 +236,8 @@ class PathoROBPlugin(BenchmarkPlugin):
     ) -> tuple[list[dict], dict[str, float]]:
         manifest_df = self._load_manifest(dataset_name, str(dataset_cfg["manifest_csv"]))
         features = self._extract_features(teacher_backbone=teacher_backbone, manifest_df=manifest_df)
-        sample_to_idx = {sid: i for i, sid in enumerate(manifest_df["sample_id"].tolist())}
+        dataset_ctx = self._dataset_context(dataset_name, manifest_df)
+        sample_to_idx = dict(dataset_ctx["sample_to_idx"])
 
         metric_rows: list[dict] = []
         log_metrics: dict[str, float] = {}
@@ -208,7 +246,7 @@ class PathoROBPlugin(BenchmarkPlugin):
         apd_cfg = dict(self.cfg.get("apd", {}) or {})
         cl_cfg = dict(self.cfg.get("clustering", {}) or {})
 
-        if bool(ri_cfg.get("enable", True)):
+        if self._metric_enabled(ri_cfg, eval_index=int(eval_index), default_every_n=1):
             ri = compute_ri(
                 dataset_name=dataset_name,
                 features=features,
@@ -232,7 +270,7 @@ class PathoROBPlugin(BenchmarkPlugin):
             )
             log_metrics[f"{dataset_name}/ri"] = float(ri.value)
 
-        if bool(apd_cfg.get("enable", True)):
+        if self._metric_enabled(apd_cfg, eval_index=int(eval_index), default_every_n=5):
             split_frames = self._ensure_apd_splits(dataset_name, dataset_cfg, manifest_df)
             aligned: list[pd.DataFrame] = []
             for sp in split_frames:
@@ -297,7 +335,7 @@ class PathoROBPlugin(BenchmarkPlugin):
                 rho_str = f"{rho:.2f}".replace(".", "_")
                 log_metrics[f"{dataset_name}/acc_ood_rho{rho_str}"] = float(mean_acc)
 
-        if bool(cl_cfg.get("enable", True)):
+        if self._metric_enabled(cl_cfg, eval_index=int(eval_index), default_every_n=5):
             cl = compute_clustering_score(
                 dataset_name=dataset_name,
                 features=features,
@@ -356,20 +394,6 @@ class PathoROBPlugin(BenchmarkPlugin):
                 err_path = self.metrics_dir / f"eval_{int(eval_index):04d}_{dataset_name}_error.txt"
                 err_path.write_text(traceback.format_exc(), encoding="utf-8")
                 logger.error("[PathoROB] %s failed at eval_index %s: %s", dataset_name, int(eval_index), exc)
-
-        if all_rows:
-            df = pd.DataFrame(all_rows)
-            out_csv = self.metrics_dir / f"eval_{int(eval_index):04d}.csv"
-            out_json = self.metrics_dir / f"eval_{int(eval_index):04d}.json"
-            df.to_csv(out_csv, index=False)
-            out_json.write_text(json.dumps(all_rows, indent=2), encoding="utf-8")
-
-            roll_csv = self.metrics_dir / "all_metrics.csv"
-            if roll_csv.exists():
-                prev = pd.read_csv(roll_csv)
-                pd.concat([prev, df], axis=0).reset_index(drop=True).to_csv(roll_csv, index=False)
-            else:
-                df.to_csv(roll_csv, index=False)
 
         return PluginResult(
             name=self.name,

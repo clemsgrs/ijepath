@@ -67,6 +67,14 @@ optimization:
 tuning:
   enable: false
   seed: 0
+  execution:
+    mode: async
+    device: auto
+    max_pending_jobs: 2
+    coalesce_policy: newest
+    poll_every_steps: 10
+    fail_on_backlog: false
+    keep_last_n_snapshots: 2
   schedule:
     interval_images: 1000000  # Run tuner every N global images seen.
     run_baseline_at_zero: true

@@ -27,7 +27,14 @@ def _base_cfg() -> dict:
         "meta": {"architecture": "vit_small", "patch_size": 16},
         "mask": {"num_enc_masks": 1, "num_pred_masks": 4, "min_keep": 8},
         "optimization": {"total_images_budget": 1000},
-        "tuning": {"enable": False, "plugins": []},
+        "tuning": {
+            "enable": False,
+            "execution": {
+                "mode": "async",
+                "device": "cuda:1",
+            },
+            "plugins": [],
+        },
     }
 
 
@@ -76,6 +83,7 @@ def test_tuning_early_stopping_requires_selection_target(tmp_path: Path):
     cfg = _base_cfg()
     cfg["tuning"] = {
         "enable": True,
+        "execution": {"mode": "async", "device": "cuda:1"},
         "plugins": [
             {
                 "type": "pathorob",
@@ -103,6 +111,7 @@ def test_tuning_early_stopping_selection_requires_enabled_plugin(tmp_path: Path)
     cfg = _base_cfg()
     cfg["tuning"] = {
         "enable": True,
+        "execution": {"mode": "async", "device": "cuda:1"},
         "plugins": [
             {"type": "pathorob", "enable": True, "datasets": {"camelyon": {"enable": False}}},
         ],
@@ -122,6 +131,7 @@ def test_tuning_early_stopping_selection_requires_enabled_dataset(tmp_path: Path
     cfg = _base_cfg()
     cfg["tuning"] = {
         "enable": True,
+        "execution": {"mode": "async", "device": "cuda:1"},
         "plugins": [
             {
                 "type": "pathorob",
@@ -145,6 +155,7 @@ def test_tuning_early_stopping_selection_rejects_unknown_metric(tmp_path: Path):
     cfg = _base_cfg()
     cfg["tuning"] = {
         "enable": True,
+        "execution": {"mode": "async", "device": "cuda:1"},
         "plugins": [
             {
                 "type": "pathorob",
@@ -169,6 +180,7 @@ def test_tuning_rejects_legacy_plugin_level_early_stopping_keys(tmp_path: Path):
     cfg = _base_cfg()
     cfg["tuning"] = {
         "enable": True,
+        "execution": {"mode": "async", "device": "cuda:1"},
         "plugins": [
             {
                 "type": "pathorob",
@@ -183,3 +195,55 @@ def test_tuning_rejects_legacy_plugin_level_early_stopping_keys(tmp_path: Path):
 
     with pytest.raises(ValueError, match="Unsupported plugin-level early stopping keys"):
         load_training_config(config_file=str(cfg_path))
+
+
+def test_tuning_requires_async_execution_device(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg = _base_cfg()
+    cfg["tuning"] = {
+        "enable": True,
+        "execution": {"mode": "sync", "device": "cuda:1"},
+        "plugins": [],
+    }
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="tuning.execution.mode"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_tuning_early_stopping_selection_requires_every_eval_cadence(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg = _base_cfg()
+    cfg["tuning"] = {
+        "enable": True,
+        "execution": {"mode": "async", "device": "cuda:1"},
+        "plugins": [
+            {
+                "type": "pathorob",
+                "enable": True,
+                "apd": {"enable": True, "every_n_evals": 5, "mode": "custom", "correlation_levels": [0.0, 1.0]},
+                "datasets": {"camelyon": {"enable": True}},
+            }
+        ],
+        "early_stopping": {
+            "enable": True,
+            "selection": {"plugin": "pathorob", "dataset": "camelyon", "metric": "apd_avg"},
+        },
+    }
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="cadence must run every eval"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_tuning_accepts_auto_execution_device(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg = _base_cfg()
+    cfg["tuning"] = {
+        "enable": True,
+        "execution": {"mode": "async", "device": "auto"},
+        "plugins": [],
+    }
+    _write_yaml(cfg_path, cfg)
+    loaded = load_training_config(config_file=str(cfg_path))
+    assert loaded["tuning"]["execution"]["device"] == "auto"

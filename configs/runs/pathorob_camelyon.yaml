@@ -29,6 +29,14 @@ optimization:
 tuning:
   enable: true
   seed: 0
+  execution:
+    mode: async
+    device: auto
+    max_pending_jobs: 2
+    coalesce_policy: newest
+    poll_every_steps: 10
+    fail_on_backlog: false
+    keep_last_n_snapshots: 2
   schedule:
     interval_images: 10000  # Run tuner every N global images seen.
     run_baseline_at_zero: true
@@ -55,15 +63,18 @@ tuning:
           ood_centers: ["CWZ", "RST", "LPON"]
       ri:
         enable: true
+        every_n_evals: 1
         k_candidates: [3, 5, 7, 10, 15]
       apd:
         enable: true
+        every_n_evals: 5
         mode: custom
         correlation_levels: [0.0, 0.14, 0.29, 0.43, 0.57, 0.71, 0.86, 1.0]
         repetitions: 3
         id_test_fraction: 0.2
       clustering:
         enable: true
+        every_n_evals: 5
         repeats: 5
         k_min: 2
         k_max: 10

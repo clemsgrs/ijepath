@@ -125,12 +125,13 @@ Runtime logs emit these diagnostics at startup with warnings and suggested knobs
 ```bash
 DATA_ROOT=/path/to/your-dataset
 
-CUDA_VISIBLE_DEVICES=0 python main.py \
+CUDA_VISIBLE_DEVICES=0,1 python main.py \
   --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
-  --run-config configs/runs/pathorob_camelyon_image_budget.yaml \
+  --run-config configs/runs/pathorob_camelyon.yaml \
   data.slide_manifest_csv=${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
   data.slide_metadata_parquet=${DATA_ROOT}/indexes/slide_metadata.parquet \
   data.anchor_catalog_manifest=${DATA_ROOT}/indexes/anchor_catalog_manifest.json \
+  tuning.execution.device=auto \
   tuning.plugins[0].datasets.camelyon.manifest_csv=${DATA_ROOT}/pathorob/camelyon_manifest.csv
 ```
 
