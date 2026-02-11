@@ -29,6 +29,8 @@ optimization:
 tuning:
   enable: true
   seed: 0
+  tune_every: 10000  # Run tuner every N global images seen.
+  run_baseline_at_zero: true
   execution:
     mode: async  # Non-blocking tuning sidecar; training no longer waits on evaluator execution.
     device: auto  # Auto-reserve one GPU for tuning (use cuda:<id> to pin manually).
@@ -37,9 +39,6 @@ tuning:
     poll_every_steps: 10  # Poll completed async tune jobs every N train steps.
     fail_on_backlog: false  # True => fail fast on full queue; false => drop stale queued evals.
     keep_last_n_snapshots: 2  # Limit on-disk teacher snapshots retained by async tuner.
-  schedule:
-    interval_images: 10000  # Run tuner every N global images seen.
-    run_baseline_at_zero: true
   data_dir: /data/pathology/projects/clement/discern/data/eval
   plugins:
     - type: pathorob
@@ -93,11 +92,14 @@ tuning:
     save_best_checkpoint: true
     best_checkpoint_name: best-robustness.pth.tar
 
+training:
+  log_every: 10000
+  save_every: 10000
+
 logging:
   folder: outputs/${wandb.exp_name}
   write_tag: jepa-pathorob
   step_log_every_iters: 0
-  checkpoint_every_images: 100000
 
 wandb:
   enable: true

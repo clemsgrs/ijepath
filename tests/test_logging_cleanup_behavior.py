@@ -50,17 +50,71 @@ def test_should_log_iteration_respects_frequency_and_anomalies():
     assert should_log_iteration(itr=3, step_log_every_iters=0, loss=float("inf")) is True
 
 
-def test_resolve_checkpoint_every_images_defaults_and_validates():
-    from ijepath.train_cross_resolution_jepa import resolve_checkpoint_every_images
+def test_resolve_training_save_every_defaults_and_validates():
+    from ijepath.train_cross_resolution_jepa import resolve_training_save_every
 
-    assert resolve_checkpoint_every_images({}) == 1_000_000
-    assert resolve_checkpoint_every_images({"checkpoint_every_images": 3}) == 3
+    assert resolve_training_save_every({}) == 1_000_000
+    assert resolve_training_save_every({"save_every": 3}) == 3
 
-    try:
-        resolve_checkpoint_every_images({"checkpoint_every_images": 0})
-        raise AssertionError("Expected ValueError for non-positive checkpoint frequency")
-    except ValueError:
-        pass
+    with pytest.raises(ValueError, match="training.save_every must be > 0"):
+        resolve_training_save_every({"save_every": 0})
+
+
+def test_resolve_training_log_every_defaults_and_validates():
+    from ijepath.train_cross_resolution_jepa import resolve_training_log_every
+
+    assert resolve_training_log_every({}) == 100_000
+    assert resolve_training_log_every({"log_every": 128}) == 128
+
+    with pytest.raises(ValueError, match="training.log_every must be > 0"):
+        resolve_training_log_every({"log_every": 0})
+
+
+def test_compute_total_passes_and_progress_desc_helpers():
+    from ijepath.train_cross_resolution_jepa import (
+        build_pass_progress_desc,
+        compute_total_passes,
+    )
+
+    assert compute_total_passes(total_steps=100, steps_per_pass=32) == 4
+    assert build_pass_progress_desc(pass_index=2, total_passes=4) == "Pass [2/4]"
+
+
+def test_save_cadence_override_helpers():
+    from ijepath.train_cross_resolution_jepa import (
+        resolve_effective_save_every,
+        should_warn_training_save_every_override,
+    )
+
+    assert (
+        resolve_effective_save_every(
+            training_save_every=500,
+            tuning_enabled=False,
+            tune_every_images=100,
+        )
+        == 500
+    )
+    assert (
+        resolve_effective_save_every(
+            training_save_every=500,
+            tuning_enabled=True,
+            tune_every_images=100,
+        )
+        == 100
+    )
+
+    assert should_warn_training_save_every_override(
+        training_save_every_explicit=False,
+        training_save_every=500,
+        tuning_enabled=True,
+        tune_every_images=100,
+    ) is False
+    assert should_warn_training_save_every_override(
+        training_save_every_explicit=True,
+        training_save_every=500,
+        tuning_enabled=True,
+        tune_every_images=100,
+    ) is True
 
 
 def test_build_pass_train_results_uses_standardized_throughput_and_explicit_mask_avg_keys():

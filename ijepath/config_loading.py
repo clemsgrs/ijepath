@@ -178,6 +178,12 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         raise ValueError("Unsupported config value: optimization.epochs")
     if "checkpoint_every_epochs" in cfg.get("logging", {}):
         raise ValueError("Unsupported config value: logging.checkpoint_every_epochs")
+    if "checkpoint_every_images" in cfg.get("logging", {}):
+        raise ValueError("Unsupported config value: logging.checkpoint_every_images")
+    if "log_every_images" in cfg.get("wandb", {}):
+        raise ValueError("Unsupported config value: wandb.log_every_images")
+    if "schedule" in cfg.get("tuning", {}):
+        raise ValueError("Unsupported config value: tuning.schedule")
 
     required_paths = (
         ("data", "slide_manifest_csv"),
@@ -217,6 +223,17 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         raise ValueError("Missing required config value: optimization.total_images_budget")
     if int(total_images_budget) <= 0:
         raise ValueError("optimization.total_images_budget must be > 0")
+
+    training_log_every = cfg.get("training", {}).get("log_every", None)
+    if training_log_every is not None and int(training_log_every) <= 0:
+        raise ValueError("training.log_every must be > 0")
+    training_save_every = cfg.get("training", {}).get("save_every", None)
+    if training_save_every is not None and int(training_save_every) <= 0:
+        raise ValueError("training.save_every must be > 0")
+
+    tune_every = cfg.get("tuning", {}).get("tune_every", None)
+    if tune_every is not None and int(tune_every) <= 0:
+        raise ValueError("tuning.tune_every must be > 0")
 
     low_anchor_pass_warning_threshold = float(
         cfg.get("data", {}).get("low_anchor_pass_warning_threshold", 1.0)

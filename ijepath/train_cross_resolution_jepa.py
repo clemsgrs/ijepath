@@ -5,6 +5,7 @@ import sys
 import time
 from pathlib import Path
 from contextlib import nullcontext
+import yaml
 
 import numpy as np
 import torch
@@ -33,8 +34,10 @@ from ijepath.utils.logging import AverageMeter, CSVLogger, gpu_timer, grad_logge
 from ijepath.utils.log_utils import setup_logging
 from ijepath.utils.tensors import repeat_interleave_batch
 
-default_checkpoint_every_images = 1_000_000
+default_training_save_every = 1_000_000
 default_step_log_every_iters = 0
+default_training_log_every = 100_000
+default_tune_every_images = 1_000_000
 
 _GLOBAL_SEED = 0
 np.random.seed(_GLOBAL_SEED)
@@ -83,11 +86,47 @@ def resolve_use_bfloat16(requested_use_bfloat16: bool, cuda_available: bool) -> 
     return bool(requested_use_bfloat16 and cuda_available)
 
 
-def resolve_checkpoint_every_images(logging_cfg: dict) -> int:
-    interval = int(logging_cfg.get("checkpoint_every_images", default_checkpoint_every_images))
+def resolve_training_save_every(training_cfg: dict) -> int:
+    interval = int(training_cfg.get("save_every", default_training_save_every))
     if interval <= 0:
-        raise ValueError("logging.checkpoint_every_images must be > 0")
+        raise ValueError("training.save_every must be > 0")
     return interval
+
+
+def resolve_training_log_every(training_cfg: dict) -> int:
+    interval = int(training_cfg.get("log_every", default_training_log_every))
+    if interval <= 0:
+        raise ValueError("training.log_every must be > 0")
+    return interval
+
+
+def resolve_effective_save_every(
+    *,
+    training_save_every: int,
+    tuning_enabled: bool,
+    tune_every_images: int,
+) -> int:
+    if int(training_save_every) <= 0:
+        raise ValueError("training_save_every must be > 0")
+    if bool(tuning_enabled):
+        if int(tune_every_images) <= 0:
+            raise ValueError("tune_every_images must be > 0 when tuning is enabled")
+        return int(tune_every_images)
+    return int(training_save_every)
+
+
+def should_warn_training_save_every_override(
+    *,
+    training_save_every_explicit: bool,
+    training_save_every: int,
+    tuning_enabled: bool,
+    tune_every_images: int,
+) -> bool:
+    return bool(
+        training_save_every_explicit
+        and tuning_enabled
+        and int(training_save_every) != int(tune_every_images)
+    )
 
 
 def resolve_uncaught_exception_exit_code() -> int:
@@ -128,6 +167,54 @@ def compute_schedule_total_steps(total_steps: int, ipe_scale: float) -> int:
         raise ValueError("ipe_scale must be > 0")
     scaled = int(float(ipe_scale) * float(total_steps))
     return max(int(total_steps), int(scaled))
+
+
+def compute_total_passes(total_steps: int, steps_per_pass: int) -> int:
+    if int(total_steps) <= 0:
+        raise ValueError("total_steps must be > 0")
+    if int(steps_per_pass) <= 0:
+        raise ValueError("steps_per_pass must be > 0")
+    return int(math.ceil(float(total_steps) / float(steps_per_pass)))
+
+
+def build_pass_progress_desc(pass_index: int, total_passes: int) -> str:
+    if int(pass_index) <= 0:
+        raise ValueError("pass_index must be > 0")
+    if int(total_passes) <= 0:
+        raise ValueError("total_passes must be > 0")
+    return f"Pass [{int(pass_index)}/{int(total_passes)}]"
+
+
+def _config_file_has_key(path: str | None, section: str, key: str) -> bool:
+    if not path:
+        return False
+    config_path = Path(path)
+    if not config_path.exists():
+        return False
+    try:
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    section_payload = payload.get(section, {})
+    return isinstance(section_payload, dict) and key in section_payload
+
+
+def is_training_save_every_explicitly_set(cfg: dict) -> bool:
+    config_sources = dict(cfg.get("_config_sources", {}) or {})
+    opts = [str(opt) for opt in (config_sources.get("opts") or [])]
+    if any(opt.startswith("training.save_every=") for opt in opts):
+        return True
+    mode = str(config_sources.get("mode", "")).strip().lower()
+    if mode == "single":
+        return _config_file_has_key(config_sources.get("config_file"), "training", "save_every")
+    if mode == "layered":
+        return any(
+            _config_file_has_key(config_sources.get(path_key), "training", "save_every")
+            for path_key in ("run_config", "profile_config")
+        )
+    return False
 
 
 def crossed_image_thresholds(
@@ -459,7 +546,9 @@ def main(
     )
     if step_log_every_iters < 0:
         raise ValueError("logging.step_log_every_iters must be >= 0")
-    checkpoint_every_images = resolve_checkpoint_every_images(args["logging"])
+    training_cfg = dict(args.get("training", {}) or {})
+    training_save_every = resolve_training_save_every(training_cfg)
+    training_log_every = resolve_training_log_every(training_cfg)
 
     os.makedirs(folder, exist_ok=True)
 
@@ -518,7 +607,11 @@ def main(
         "Image-budget control:\n"
         f" - total_images_budget={total_images_budget:,}\n"
         f" - total_steps={total_steps:,}\n"
-        f" - checkpoint_every_images={checkpoint_every_images:,}"
+        f" - training.save_every={training_save_every:,}"
+    )
+    logger.info(
+        "Train logging cadence:\n"
+        f" - training.log_every={training_log_every:,}"
     )
 
     log_file = os.path.join(folder, f"{tag}_r{rank}.csv")
@@ -696,11 +789,27 @@ def main(
 
     tuning_cfg = dict(args.get("tuning", {}) or {})
     tuning_enabled_cfg = bool(tuning_cfg.get("enable", False))
-    tuning_schedule_cfg = dict(tuning_cfg.get("schedule", {}) or {})
-    tune_interval_images = int(tuning_schedule_cfg.get("interval_images", default_checkpoint_every_images))
-    if tuning_enabled_cfg and tune_interval_images <= 0:
-        raise ValueError("tuning.schedule.interval_images must be > 0")
-    run_baseline_at_zero = bool(tuning_schedule_cfg.get("run_baseline_at_zero", True))
+    tune_every_images = int(tuning_cfg.get("tune_every", default_tune_every_images))
+    if tuning_enabled_cfg and tune_every_images <= 0:
+        raise ValueError("tuning.tune_every must be > 0")
+    run_baseline_at_zero = bool(tuning_cfg.get("run_baseline_at_zero", True))
+    training_save_every_explicit = is_training_save_every_explicitly_set(args)
+    effective_save_every = resolve_effective_save_every(
+        training_save_every=int(training_save_every),
+        tuning_enabled=bool(tuning_enabled_cfg),
+        tune_every_images=int(tune_every_images),
+    )
+    if should_warn_training_save_every_override(
+        training_save_every_explicit=training_save_every_explicit,
+        training_save_every=int(training_save_every),
+        tuning_enabled=bool(tuning_enabled_cfg),
+        tune_every_images=int(tune_every_images),
+    ):
+        logger.warning(
+            "WARNING! tuning.enable=true overrides training.save_every=%d with tuning.tune_every=%d for checkpoint cadence.",
+            int(training_save_every),
+            int(tune_every_images),
+        )
     anchor_count = int(
         getattr(unsupervised_dataset, "total_anchors", 0)
         or len(getattr(unsupervised_dataset, "anchors", []))
@@ -709,7 +818,7 @@ def main(
     anchor_budget = compute_anchor_pass_budget(
         anchor_count=anchor_count,
         total_images_budget=total_images_budget,
-        interval_images=max(1, tune_interval_images),
+        interval_images=max(1, tune_every_images),
         run_baseline_at_zero=run_baseline_at_zero,
     )
     if not tuning_enabled_cfg:
@@ -734,6 +843,21 @@ def main(
             "Anchor reuse may dominate context diversity. Increase anchor catalog diversity (add slides) or reduce total_images_budget. "
             "For extra target-placement diversity per anchor, increase data.targets_per_context."
         )
+
+    total_passes = compute_total_passes(total_steps=total_steps, steps_per_pass=ipe)
+    expected_train_log_events = int(math.ceil(float(total_images_budget) / float(training_log_every)))
+    logger.info(
+        "Cadence vs image budget:\n"
+        f" - training.log_every={training_log_every:,} (~{expected_train_log_events:,} train logs over budget)\n"
+        f" - tuning.tune_every={tune_every_images:,} "
+        f"(enabled={tuning_enabled_cfg}, expected_eval_events={int(anchor_budget['expected_eval_events']):,})\n"
+        f" - effective_checkpoint_save_every={effective_save_every:,}"
+    )
+    logger.info(
+        "Training pass plan:\n"
+        f" - total_passes={total_passes:,} (progress bar shows Pass [x/{total_passes}])\n"
+        f" - anchor_passes_total={float(anchor_budget['anchor_passes_total']):.4f}"
+    )
 
     tuner = None
     tuning_runtime = None
@@ -777,14 +901,26 @@ def main(
                 save_best_checkpoint=bool(early_stop_cfg.get("save_best_checkpoint", True)),
             )
 
-    next_checkpoint_images = int((images_seen // checkpoint_every_images) + 1) * int(checkpoint_every_images)
+    next_checkpoint_images = int((images_seen // effective_save_every) + 1) * int(effective_save_every)
+    next_wandb_log_images = int((images_seen // training_log_every) + 1) * int(training_log_every)
     if tuning_enabled_cfg:
-        next_tune_images = int((images_seen // tune_interval_images) + 1) * int(tune_interval_images)
+        next_tune_images = int((images_seen // tune_every_images) + 1) * int(tune_every_images)
     else:
         next_tune_images = 0
-    eval_index = int(images_seen // tune_interval_images) if tuning_enabled_cfg else 0
+    eval_index = int(images_seen // tune_every_images) if tuning_enabled_cfg else 0
     if tuning_enabled_cfg and run_baseline_at_zero and images_seen > 0:
         eval_index += 1
+
+    wandb_loss_meter = AverageMeter()
+    wandb_maskA_meter = AverageMeter()
+    wandb_maskB_meter = AverageMeter()
+    wandb_time_meter = AverageMeter()
+    wandb_window_images = 0
+    wandb_window_iters = 0
+    wandb_window_seconds = 0.0
+    wandb_window_last_lr = float("nan")
+    wandb_window_last_wd = float("nan")
+    last_wandb_train_log_images = int(images_seen)
 
     def enqueue_tuning_eval(
         *,
@@ -808,12 +944,16 @@ def main(
 
         if wandb_enabled:
             queue_log: dict[str, float | int] = {
-                "tune/eval_index": int(eval_index_value),
-                "tune/eval_images_seen": int(eval_images_seen),
+                "images_seen": int(eval_images_seen),
                 "train/images_seen_at_log": int(images_seen_at_log),
-                "tune/queue_depth": int(queue_stats.get("queue_depth", 0)),
-                "tune/dropped_evals": int(queue_stats.get("dropped_evals", 0)),
             }
+            queue_metrics = {
+                "eval_index": int(eval_index_value),
+                "eval_images_seen": int(eval_images_seen),
+                "queue_depth": int(queue_stats.get("queue_depth", 0)),
+                "dropped_evals": int(queue_stats.get("dropped_evals", 0)),
+            }
+            update_log_dict("tune", queue_metrics, queue_log, step="images_seen")
             log_dict(queue_log)
 
     def process_tuning_completions(*, images_seen_at_log: int) -> None:
@@ -847,18 +987,22 @@ def main(
 
             if wandb_enabled:
                 tune_log: dict[str, float | int] = {
-                    "tune/eval_index": int(event_eval_index),
-                    "tune/eval_images_seen": int(event_images_seen),
+                    "images_seen": int(event_images_seen),
                     "train/images_seen_at_log": int(images_seen_at_log),
-                    "tune/queue_depth": int(tuning_runtime.queue_depth()),
-                    "tune/dropped_evals": int(tuning_runtime.dropped_evals()),
-                    "tune/result_lag_images": int(max(0, int(images_seen_at_log) - int(event_images_seen))),
-                    "tune/result_lag_seconds": float(event_latency),
-                    "tune/worker_seconds": float(event_worker_seconds),
-                    "tune/tuning_blocked_ms": 0.0,
                 }
+                tune_infra_metrics = {
+                    "eval_index": int(event_eval_index),
+                    "eval_images_seen": int(event_images_seen),
+                    "queue_depth": int(tuning_runtime.queue_depth()),
+                    "dropped_evals": int(tuning_runtime.dropped_evals()),
+                    "result_lag_images": int(max(0, int(images_seen_at_log) - int(event_images_seen))),
+                    "result_lag_seconds": float(event_latency),
+                    "worker_seconds": float(event_worker_seconds),
+                    "tuning_blocked_ms": 0.0,
+                }
+                update_log_dict("tune", tune_infra_metrics, tune_log, step="images_seen")
                 if tune_metrics:
-                    update_log_dict("tune", tune_metrics, tune_log, step="tune/eval_images_seen")
+                    update_log_dict("tune", tune_metrics, tune_log, step="images_seen")
                 log_dict(tune_log)
 
             snapshot = pending_eval_snapshots.pop(event_eval_index, None)
@@ -916,17 +1060,12 @@ def main(
             remaining_steps = int(total_steps - steps_done)
             pass_target_images = int(min(ipe, remaining_steps) * global_batch_size)
 
-            if wandb_enabled:
-                pass_log: dict[str, float | int] = {
-                    "pass_index": current_pass_index,
-                    "images_seen": int(images_seen),
-                }
-            else:
-                pass_log = {}
-
             with tqdm.tqdm(
                 total=pass_target_images,
-                desc=f"Pass [{current_pass_index}]",
+                desc=build_pass_progress_desc(
+                    pass_index=current_pass_index,
+                    total_passes=total_passes,
+                ),
                 unit=" img",
                 unit_scale=True,
                 ncols=100,
@@ -937,6 +1076,7 @@ def main(
                 for itr in range(ipe):
                     if steps_done >= total_steps or should_stop_training:
                         break
+                    iter_wall_start = time.time()
                     try:
                         batch_data, masks_enc, masks_pred = next(loader_iter)
                     except StopIteration:
@@ -1023,6 +1163,9 @@ def main(
                     pass_iters_done += 1
                     prev_images_seen = int(images_seen)
                     images_seen = int(min(total_images_budget, prev_images_seen + global_batch_size))
+                    iter_images_processed = int(
+                        min(global_batch_size, max(0, total_images_budget - prev_images_seen))
+                    )
 
                     loss_meter.update(loss)
                     time_meter.update(etime)
@@ -1039,12 +1182,23 @@ def main(
                     )
 
                     if rank == 0:
-                        iter_bar.update(int(min(global_batch_size, max(0, total_images_budget - prev_images_seen))))
+                        iter_bar.update(iter_images_processed)
                         iter_bar.set_postfix(
                             loss=f"{loss_meter.avg:.3f}",
                             lr=f"{pass_last_lr:.2e}",
                             wd=f"{pass_last_wd:.2e}",
                         )
+
+                    if wandb_enabled:
+                        wandb_loss_meter.update(loss)
+                        wandb_maskA_meter.update(maskA_meter.val)
+                        wandb_maskB_meter.update(maskB_meter.val)
+                        wandb_time_meter.update(etime)
+                        wandb_window_images += int(iter_images_processed)
+                        wandb_window_iters += 1
+                        wandb_window_last_lr = float(pass_last_lr)
+                        wandb_window_last_wd = float(pass_last_wd)
+                        wandb_window_seconds += max(0.0, float(time.time() - iter_wall_start))
 
                     if should_log_iteration(
                         itr=itr,
@@ -1086,7 +1240,7 @@ def main(
                         prev_images_seen=prev_images_seen,
                         new_images_seen=images_seen,
                         next_threshold=next_checkpoint_images,
-                        interval=checkpoint_every_images,
+                        interval=effective_save_every,
                     )
                     for crossed in crossed_ckpt:
                         save_snapshot(
@@ -1095,12 +1249,64 @@ def main(
                             write_latest=True,
                         )
 
+                    crossed_wandb, next_wandb_log_images = crossed_image_thresholds(
+                        prev_images_seen=prev_images_seen,
+                        new_images_seen=images_seen,
+                        next_threshold=next_wandb_log_images,
+                        interval=training_log_every,
+                    )
+                    if wandb_enabled and crossed_wandb and wandb_loss_meter.count > 0:
+                        window_seconds = float(max(0.0, wandb_window_seconds))
+                        window_images = int(max(0, wandb_window_images))
+                        window_iters = int(max(0, wandb_window_iters))
+                        window_images_per_sec = (
+                            float(window_images) / window_seconds
+                            if window_seconds > 0.0
+                            else 0.0
+                        )
+                        window_iters_per_sec = (
+                            float(window_iters) / window_seconds
+                            if window_seconds > 0.0
+                            else 0.0
+                        )
+                        for wandb_log_step in crossed_wandb:
+                            train_results = build_pass_train_results(
+                                loss_avg=float(wandb_loss_meter.avg),
+                                loss_min=float(wandb_loss_meter.min),
+                                loss_max=float(wandb_loss_meter.max),
+                                context_keep_tokens_avg=float(wandb_maskA_meter.avg),
+                                target_predict_tokens_avg=float(wandb_maskB_meter.avg),
+                                iter_time_ms=float(wandb_time_meter.avg),
+                                pass_time_s=float(window_seconds),
+                                images_seen=int(wandb_log_step),
+                                anchor_passes_seen=float(wandb_log_step) / float(max(1, anchor_count)),
+                                images_per_sec=float(window_images_per_sec),
+                                iterations_per_sec=float(window_iters_per_sec),
+                                lr=float(wandb_window_last_lr),
+                                wd=float(wandb_window_last_wd),
+                                global_batch_size=int(global_batch_size),
+                            )
+                            train_log: dict[str, float | int] = {
+                                "pass_index": int(current_pass_index),
+                                "images_seen": int(wandb_log_step),
+                            }
+                            update_log_dict("train", train_results, train_log, step="images_seen")
+                            log_images_seen_dict(train_log, images_seen=int(wandb_log_step))
+                        wandb_loss_meter.reset()
+                        wandb_maskA_meter.reset()
+                        wandb_maskB_meter.reset()
+                        wandb_time_meter.reset()
+                        wandb_window_images = 0
+                        wandb_window_iters = 0
+                        wandb_window_seconds = 0.0
+                        last_wandb_train_log_images = int(crossed_wandb[-1])
+
                     if tuning_enabled_cfg:
                         crossed_tune, next_tune_images = crossed_image_thresholds(
                             prev_images_seen=prev_images_seen,
                             new_images_seen=images_seen,
                             next_threshold=next_tune_images,
-                            interval=tune_interval_images,
+                            interval=tune_every_images,
                         )
                     else:
                         crossed_tune = []
@@ -1160,30 +1366,51 @@ def main(
                 write_latest=True,
             )
 
-            if wandb_enabled:
-                train_results = build_pass_train_results(
-                    loss_avg=float(loss_meter.avg),
-                    loss_min=float(loss_meter.min),
-                    loss_max=float(loss_meter.max),
-                    context_keep_tokens_avg=float(maskA_meter.avg),
-                    target_predict_tokens_avg=float(maskB_meter.avg),
-                    iter_time_ms=float(time_meter.avg),
-                    pass_time_s=float(pass_seconds),
-                    images_seen=int(images_seen),
-                    anchor_passes_seen=float(anchor_passes_seen),
-                    images_per_sec=float(pass_images_per_sec),
-                    iterations_per_sec=float(pass_iterations_per_sec),
-                    lr=float(pass_last_lr),
-                    wd=float(pass_last_wd),
-                    global_batch_size=int(global_batch_size),
-                )
-                update_log_dict("train", train_results, pass_log, step="images_seen")
-                log_images_seen_dict(pass_log, images_seen=int(images_seen))
-
             pass_index += 1
 
         if tuning_enabled_cfg and rank == 0 and tuning_runtime is not None:
             process_tuning_completions(images_seen_at_log=int(images_seen))
+
+        if (
+            wandb_enabled
+            and wandb_loss_meter.count > 0
+            and int(images_seen) > int(last_wandb_train_log_images)
+        ):
+            window_seconds = float(max(0.0, wandb_window_seconds))
+            window_images = int(max(0, wandb_window_images))
+            window_iters = int(max(0, wandb_window_iters))
+            window_images_per_sec = (
+                float(window_images) / window_seconds
+                if window_seconds > 0.0
+                else 0.0
+            )
+            window_iters_per_sec = (
+                float(window_iters) / window_seconds
+                if window_seconds > 0.0
+                else 0.0
+            )
+            train_results = build_pass_train_results(
+                loss_avg=float(wandb_loss_meter.avg),
+                loss_min=float(wandb_loss_meter.min),
+                loss_max=float(wandb_loss_meter.max),
+                context_keep_tokens_avg=float(wandb_maskA_meter.avg),
+                target_predict_tokens_avg=float(wandb_maskB_meter.avg),
+                iter_time_ms=float(wandb_time_meter.avg),
+                pass_time_s=float(window_seconds),
+                images_seen=int(images_seen),
+                anchor_passes_seen=float(images_seen) / float(max(1, anchor_count)),
+                images_per_sec=float(window_images_per_sec),
+                iterations_per_sec=float(window_iters_per_sec),
+                lr=float(wandb_window_last_lr),
+                wd=float(wandb_window_last_wd),
+                global_batch_size=int(global_batch_size),
+            )
+            train_log = {
+                "pass_index": int(max(0, pass_index)),
+                "images_seen": int(images_seen),
+            }
+            update_log_dict("train", train_results, train_log, step="images_seen")
+            log_images_seen_dict(train_log, images_seen=int(images_seen))
 
         final_snapshot = build_snapshot(
             pass_id=max(0, pass_index),
