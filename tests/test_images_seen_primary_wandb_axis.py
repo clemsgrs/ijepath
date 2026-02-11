@@ -35,3 +35,37 @@ def test_wandb_images_seen_logging_uses_images_seen_step(monkeypatch):
     assert payload["train/loss"] == 0.25
     assert payload["train/wd"] == 0.04
     assert payload["train/lr"] == 1e-4
+
+
+def test_tune_metrics_can_bind_to_images_seen_axis(monkeypatch):
+    calls = []
+    defined = []
+
+    class _FakeWandb:
+        @staticmethod
+        def log(payload, step=None):
+            calls.append((payload, step))
+
+        @staticmethod
+        def define_metric(*args, **kwargs):
+            defined.append((args, kwargs))
+
+    monkeypatch.setattr("ijepath.log.tracker.wandb", _FakeWandb)
+
+    log_payload = {"images_seen": 5000}
+    update_log_dict(
+        "tune",
+        {"ri": 0.42, "eval_index": 7},
+        log_payload,
+        step="images_seen",
+    )
+    log_images_seen_dict(log_payload, images_seen=5000)
+
+    assert any(args[0] == "tune/ri" and kwargs.get("step_metric") == "images_seen" for args, kwargs in defined)
+    assert any(
+        args[0] == "tune/eval_index" and kwargs.get("step_metric") == "images_seen"
+        for args, kwargs in defined
+    )
+    payload, step = calls[0]
+    assert payload["images_seen"] == 5000
+    assert step == 5000

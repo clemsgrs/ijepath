@@ -239,3 +239,113 @@ def test_legacy_anchor_catalog_and_slide_index_keys_are_rejected(tmp_path: Path)
 
     with pytest.raises(ValueError, match="data.slide_metadata_index_jsonl"):
         load_training_config(config_file=str(cfg_path))
+
+
+def test_training_cadence_values_must_be_positive_when_provided(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(
+        cfg_path,
+        {
+            "data": {
+                "slide_manifest_csv": "a.csv",
+                "slide_metadata_parquet": "index.parquet",
+                "anchor_catalog_manifest": "manifest.json",
+                "batch_size_per_gpu": 2,
+                "context_mpp": 1.0,
+                "target_mpp": 0.5,
+                "context_fov_um": 512.0,
+                "target_fov_um": 128.0,
+                "targets_per_context": 4,
+            },
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10},
+            "meta": {"architecture": "vit_small", "patch_size": 16},
+            "optimization": {"total_images_budget": 1000},
+            "training": {"log_every": 0, "save_every": 1000},
+            "tuning": {"tune_every": 1000},
+        },
+    )
+
+    with pytest.raises(ValueError, match="training.log_every must be > 0"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_legacy_checkpoint_and_tuning_schedule_keys_are_rejected(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(
+        cfg_path,
+        {
+            "data": {
+                "slide_manifest_csv": "a.csv",
+                "slide_metadata_parquet": "index.parquet",
+                "anchor_catalog_manifest": "manifest.json",
+                "batch_size_per_gpu": 2,
+                "context_mpp": 1.0,
+                "target_mpp": 0.5,
+                "context_fov_um": 512.0,
+                "target_fov_um": 128.0,
+                "targets_per_context": 4,
+            },
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10},
+            "meta": {"architecture": "vit_small", "patch_size": 16},
+            "optimization": {"total_images_budget": 1000},
+            "logging": {"checkpoint_every_images": 1000},
+            "tuning": {"tune_every": 1000},
+        },
+    )
+
+    with pytest.raises(ValueError, match="logging.checkpoint_every_images"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_legacy_tuning_schedule_key_is_rejected(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(
+        cfg_path,
+        {
+            "data": {
+                "slide_manifest_csv": "a.csv",
+                "slide_metadata_parquet": "index.parquet",
+                "anchor_catalog_manifest": "manifest.json",
+                "batch_size_per_gpu": 2,
+                "context_mpp": 1.0,
+                "target_mpp": 0.5,
+                "context_fov_um": 512.0,
+                "target_fov_um": 128.0,
+                "targets_per_context": 4,
+            },
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10},
+            "meta": {"architecture": "vit_small", "patch_size": 16},
+            "optimization": {"total_images_budget": 1000},
+            "tuning": {"schedule": {"interval_images": 1000, "run_baseline_at_zero": True}},
+        },
+    )
+
+    with pytest.raises(ValueError, match="tuning.schedule"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_legacy_wandb_log_every_images_key_is_rejected(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(
+        cfg_path,
+        {
+            "data": {
+                "slide_manifest_csv": "a.csv",
+                "slide_metadata_parquet": "index.parquet",
+                "anchor_catalog_manifest": "manifest.json",
+                "batch_size_per_gpu": 2,
+                "context_mpp": 1.0,
+                "target_mpp": 0.5,
+                "context_fov_um": 512.0,
+                "target_fov_um": 128.0,
+                "targets_per_context": 4,
+            },
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10},
+            "meta": {"architecture": "vit_small", "patch_size": 16},
+            "optimization": {"total_images_budget": 1000},
+            "wandb": {"log_every_images": 1000},
+        },
+    )
+
+    with pytest.raises(ValueError, match="wandb.log_every_images"):
+        load_training_config(config_file=str(cfg_path))

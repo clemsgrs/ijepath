@@ -144,11 +144,13 @@ Async tuning behavior and key knobs:
 - `tuning.execution.keep_last_n_snapshots`: limits on-disk teacher snapshot retention.
 - `tuning.plugins[*].feature_num_workers`, `feature_persistent_workers`, `feature_prefetch_factor`: feature extraction loader throughput controls.
 - `tuning.plugins[*].ri/apd/clustering.every_n_evals`: cadence controls for heavy metrics.
-- Async `wandb` tune logging is keyed to `tune/eval_images_seen` (plus `train/images_seen_at_log`) so curves stay aligned to evaluation image budget.
+- `training.log_every`: cadence for `train/*` W&B logs in images seen (plus a final flush at run end).
+- `tuning.tune_every`: cadence for tuning events in images seen.
+- Tune metrics log with `images_seen` as their W&B step metric so tuning curves can be plotted directly on image budget.
 
 Checkpoint semantics:
 - Always keeps `<write_tag>-latest.pth.tar`
-- Also writes image-tagged snapshots at thresholds:
+- Also writes image-tagged snapshots at thresholds (`training.save_every`, overridden by `tuning.tune_every` when tuning is enabled):
   - `<write_tag>-img1000000.pth.tar`
   - `<write_tag>-img2000000.pth.tar`
 - If robustness early stopping is enabled and improves, writes `best-robustness.pth.tar`

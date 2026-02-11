@@ -64,9 +64,15 @@ optimization:
   warmup: 0.1  # Warmup fraction of total_steps (warmup_steps=int(warmup * total_steps)).
   weight_decay: 0.04
 
+training:
+  log_every: 100000  # Log train metrics every N images seen.
+  save_every: 1000000  # Save numbered checkpoint every N images seen (overridden by tuning.tune_every when tuning.enable=true).
+
 tuning:
   enable: false
   seed: 0
+  tune_every: 1000000  # Run tuner every N global images seen.
+  run_baseline_at_zero: true
   execution:
     mode: async  # Only supported mode; tuning runs asynchronously from rank-0 training loop.
     device: auto  # auto = reserve one visible GPU for tuning; or set cuda:<id> explicitly.
@@ -75,9 +81,6 @@ tuning:
     poll_every_steps: 10  # Training loop polls async tuning results every N optimizer steps.
     fail_on_backlog: false  # If true, raise when queue is full instead of dropping stale queued evals.
     keep_last_n_snapshots: 2  # Keep at most N evaluator snapshot files on disk.
-  schedule:
-    interval_images: 1000000  # Run tuner every N global images seen.
-    run_baseline_at_zero: true
   # PathoROB plugin knobs are configured under tuning.plugins[*], including:
   # - feature_num_workers / feature_persistent_workers / feature_prefetch_factor
   # - ri.every_n_evals / apd.every_n_evals / clustering.every_n_evals
@@ -98,7 +101,6 @@ logging:
   folder: outputs/train
   write_tag: jepa
   step_log_every_iters: 0  # 0 => disable per-step terminal logs and rely on per-pass summaries.
-  checkpoint_every_images: 1000000  # Save numbered checkpoint every N images seen.
 
 wandb:
   enable: false

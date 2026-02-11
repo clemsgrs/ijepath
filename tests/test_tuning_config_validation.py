@@ -78,6 +78,16 @@ def test_checkpoint_every_epochs_is_rejected(tmp_path: Path):
         load_training_config(config_file=str(cfg_path))
 
 
+def test_tuning_schedule_is_rejected(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg = _base_cfg()
+    cfg["tuning"]["schedule"] = {"interval_images": 1000, "run_baseline_at_zero": True}
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="tuning.schedule"):
+        load_training_config(config_file=str(cfg_path))
+
+
 def test_tuning_early_stopping_requires_selection_target(tmp_path: Path):
     cfg_path = tmp_path / "cfg.yaml"
     cfg = _base_cfg()
