@@ -72,3 +72,40 @@ def test_resolve_distributed_gpu_request_auto_uses_spare_index(monkeypatch):
         tasks_per_node=3,
     )
     assert out == 4
+
+
+def test_trainer_logs_traceback_and_reraises_app_main_failure(monkeypatch):
+    exception_logs: list[str] = []
+
+    class _FakeLogger:
+        def info(self, *_args, **_kwargs):
+            return None
+
+        def exception(self, msg, *args):
+            if args:
+                msg = msg % args
+            exception_logs.append(str(msg))
+
+    monkeypatch.setenv("SLURM_NTASKS", "1")
+    monkeypatch.delenv("MASTER_PORT", raising=False)
+    monkeypatch.setattr(main_dist, "setup_logging", lambda **_: None)
+    monkeypatch.setattr(main_dist, "logger", _FakeLogger())
+    monkeypatch.setattr(main_dist, "load_training_config", lambda **_: {"ok": True})
+
+    def _boom(*, args, **_kwargs):
+        raise RuntimeError("trainer exploded")
+
+    monkeypatch.setattr(main_dist, "app_main", _boom)
+
+    trainer = main_dist.Trainer(
+        profile_config="profile.yaml",
+        run_config="run.yaml",
+        opts=["x=1"],
+    )
+    try:
+        trainer()
+        raise AssertionError("Expected RuntimeError to propagate from app_main")
+    except RuntimeError as exc:
+        assert "trainer exploded" in str(exc)
+
+    assert any("Training entrypoint crashed with unhandled exception" in line for line in exception_logs)

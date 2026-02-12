@@ -304,34 +304,45 @@ def process_main(
 
     logger = setup_logging(level=logging.INFO if rank == 0 else logging.ERROR)
 
-    logger.info(
-        f"called-params default={DEFAULT_CONFIG_PATH} "
-        f"profile={profile_config} run={run_config} opts={rank_opts}"
-    )
+    try:
+        logger.info(
+            f"called-params default={DEFAULT_CONFIG_PATH} "
+            f"profile={profile_config} run={run_config} opts={rank_opts}"
+        )
 
-    # -- load script params
-    params = load_training_config(
-        default_config=DEFAULT_CONFIG_PATH,
-        profile_config=profile_config,
-        run_config=run_config,
-        opts=rank_opts,
-    )
-    logger.info(
-        f"loaded layered config (default={DEFAULT_CONFIG_PATH} "
-        f"profile={profile_config} run={run_config})"
-    )
+        # -- load script params
+        params = load_training_config(
+            default_config=DEFAULT_CONFIG_PATH,
+            profile_config=profile_config,
+            run_config=run_config,
+            opts=rank_opts,
+        )
+        logger.info(
+            f"loaded layered config (default={DEFAULT_CONFIG_PATH} "
+            f"profile={profile_config} run={run_config})"
+        )
 
-    world_size, rank = init_distributed(
-        rank_and_world_size=(rank, world_size),
-        master_addr=master_addr,
-        port=master_port,
-    )
-    logger.info(
-        f"Distributed context initialized: rank={rank} "
-        f"world_size={world_size} device={device_token} "
-        f"master_addr={master_addr} master_port={master_port}"
-    )
-    app_main(args=params, distributed_state=(world_size, rank))
+        world_size, rank = init_distributed(
+            rank_and_world_size=(rank, world_size),
+            master_addr=master_addr,
+            port=master_port,
+        )
+        logger.info(
+            f"Distributed context initialized: rank={rank} "
+            f"world_size={world_size} device={device_token} "
+            f"master_addr={master_addr} master_port={master_port}"
+        )
+        app_main(args=params, distributed_state=(world_size, rank))
+    except BaseException:
+        logger.exception(
+            "Worker rank=%s device=%s crashed with unhandled exception (profile=%s run=%s opts=%s)",
+            rank,
+            device_token,
+            profile_config,
+            run_config,
+            rank_opts,
+        )
+        raise
 
 
 def launch_worker_processes(

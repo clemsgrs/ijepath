@@ -137,25 +137,35 @@ class Trainer:
             )
 
         setup_logging(level=logging.INFO)
-        logger.info(
-            f"called-params default={DEFAULT_CONFIG_PATH} "
-            f"profile={self.profile_config} run={self.run_config} opts={self.opts}"
-        )
+        try:
+            logger.info(
+                f"called-params default={DEFAULT_CONFIG_PATH} "
+                f"profile={self.profile_config} run={self.run_config} opts={self.opts}"
+            )
 
-        # -- load script params
-        params = load_training_config(
-            default_config=DEFAULT_CONFIG_PATH,
-            profile_config=self.profile_config,
-            run_config=self.run_config,
-            opts=self.opts,
-        )
-        logger.info(
-            f"loaded layered config (default={DEFAULT_CONFIG_PATH} "
-            f"profile={self.profile_config} run={self.run_config})"
-        )
+            # -- load script params
+            params = load_training_config(
+                default_config=DEFAULT_CONFIG_PATH,
+                profile_config=self.profile_config,
+                run_config=self.run_config,
+                opts=self.opts,
+            )
+            logger.info(
+                f"loaded layered config (default={DEFAULT_CONFIG_PATH} "
+                f"profile={self.profile_config} run={self.run_config})"
+            )
 
-        resume_preempt = False if load_model is None else load_model
-        app_main(args=params, resume_preempt=resume_preempt)
+            resume_preempt = False if load_model is None else load_model
+            app_main(args=params, resume_preempt=resume_preempt)
+        except BaseException:
+            logger.exception(
+                "Training entrypoint crashed with unhandled exception (default=%s profile=%s run=%s opts=%s)",
+                DEFAULT_CONFIG_PATH,
+                self.profile_config,
+                self.run_config,
+                self.opts,
+            )
+            raise
 
     def checkpoint(self):
         fb_trainer = Trainer(

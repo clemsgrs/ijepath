@@ -1,7 +1,6 @@
 import logging
 import math
 import os
-import sys
 import time
 from pathlib import Path
 from contextlib import nullcontext
@@ -196,17 +195,17 @@ def should_warn_training_save_every_override(
     )
 
 
-def resolve_uncaught_exception_exit_code() -> int:
-    _, exc, _ = sys.exc_info()
-    if exc is None:
+def resolve_wandb_exit_code_from_outcome(
+    *,
+    training_completed_successfully: bool,
+    fatal_training_exception: BaseException | None,
+) -> int:
+    if bool(training_completed_successfully):
         return 0
-    if isinstance(exc, SystemExit):
-        code = exc.code
-        if code is None:
-            return 0
-        if isinstance(code, int):
+    if isinstance(fatal_training_exception, SystemExit):
+        code = fatal_training_exception.code
+        if isinstance(code, int) and code != 0:
             return int(code)
-        return 1
     return 1
 
 
@@ -1153,6 +1152,8 @@ def main(
         perf_cache_eviction_count = 0
         perf_cache_sample_count = 0
         perf_next_log_images = int(perf_debug_log_every_images)
+    training_completed_successfully = False
+    fatal_training_exception: BaseException | None = None
     try:
         if tuning_enabled_cfg and run_baseline_at_zero and images_seen == 0:
             if rank == 0 and tuning_runtime is not None:
@@ -1669,6 +1670,18 @@ def main(
 
         if should_stop_training:
             logger.info(f"Training terminated early by robustness early stopping at images_seen={images_seen}")
+        training_completed_successfully = True
+    except BaseException as exc:
+        fatal_training_exception = exc
+        logger.exception(
+            "Training crashed before successful completion: images_seen=%d steps_done=%d pass_index=%d total_steps=%d total_images_budget=%d",
+            int(images_seen),
+            int(steps_done),
+            int(pass_index),
+            int(total_steps),
+            int(total_images_budget),
+        )
+        raise
     finally:
         if rank == 0 and tuning_runtime is not None:
             try:
@@ -1677,7 +1690,16 @@ def main(
                 logger.exception("Failed to process async tuning completions during shutdown")
             tuning_runtime.shutdown(wait=False, timeout_s=2.0)
         if wandb_enabled:
-            finish_wandb(exit_code=resolve_uncaught_exception_exit_code())
+            wandb_exit_code = resolve_wandb_exit_code_from_outcome(
+                training_completed_successfully=training_completed_successfully,
+                fatal_training_exception=fatal_training_exception,
+            )
+            try:
+                finish_wandb(exit_code=wandb_exit_code)
+            except Exception:
+                logger.exception("Failed to finalize W&B run")
+                if fatal_training_exception is None:
+                    raise
         if dist.is_available() and dist.is_initialized():
             try:
                 dist.destroy_process_group()

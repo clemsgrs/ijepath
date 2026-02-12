@@ -40,6 +40,49 @@ def test_process_main_defers_config_logging_to_trainer(monkeypatch):
     assert any("loaded layered config" in line for line in captured_logs)
 
 
+def test_process_main_logs_traceback_then_reraises_worker_failure(monkeypatch):
+    info_logs: list[str] = []
+    exception_logs: list[str] = []
+
+    class _FakeLogger:
+        def info(self, msg, *args):
+            if args:
+                msg = msg % args
+            info_logs.append(str(msg))
+
+        def exception(self, msg, *args):
+            if args:
+                msg = msg % args
+            exception_logs.append(str(msg))
+
+    monkeypatch.setattr(main_entry, "setup_logging", lambda **_: _FakeLogger())
+    monkeypatch.setattr(main_entry, "load_training_config", lambda **_: {"ok": True})
+    monkeypatch.setattr(main_entry, "init_distributed", lambda **_kwargs: (2, 1))
+
+    def _boom(*, args, **_kwargs):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(main_entry, "app_main", _boom)
+
+    with pytest.raises(RuntimeError, match="kaboom"):
+        main_entry.process_main(
+            rank=1,
+            profile_config="profile.yaml",
+            run_config="run.yaml",
+            opts=["x=1"],
+            world_size=2,
+            visible_devices=["0", "1"],
+            master_addr="127.0.0.1",
+            master_port=29500,
+        )
+
+    assert any("crashed with unhandled exception" in line for line in exception_logs)
+    assert any("rank=1" in line for line in exception_logs)
+    assert any("device=1" in line for line in exception_logs)
+    assert any("opts=['x=1']" in line for line in exception_logs)
+    assert any("called-params" in line for line in info_logs)
+
+
 def test_resolve_step_log_every_images_supports_int_and_fraction():
     from ijepath.train_cross_resolution_jepa import resolve_step_log_every_images
 
