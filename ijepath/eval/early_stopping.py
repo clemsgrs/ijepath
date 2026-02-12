@@ -22,8 +22,8 @@ class RobustnessEarlyStopper:
         if int(self.min_evals) < 0:
             raise ValueError("min_evals must be >= 0")
         self.best_metric: float | None = None
-        self.num_evals = 0
-        self.bad_eval_streak = 0
+        self.num_tunes = 0
+        self.bad_tune_streak = 0
         self.should_stop = False
         self.checkpoint_path = Path(self.checkpoint_path)
 
@@ -34,17 +34,17 @@ class RobustnessEarlyStopper:
             return float(value) > float(self.best_metric)
         return float(value) < float(self.best_metric)
 
-    def on_eval(self, metric_value: float, snapshot: dict) -> None:
-        self.num_evals += 1
+    def on_tune(self, metric_value: float, snapshot: dict) -> None:
+        self.num_tunes += 1
 
         if self._is_improved(metric_value):
             self.best_metric = float(metric_value)
-            self.bad_eval_streak = 0
+            self.bad_tune_streak = 0
             if bool(self.save_best_checkpoint):
                 self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
                 torch.save(snapshot, self.checkpoint_path)
             return
 
-        self.bad_eval_streak += 1
-        if self.num_evals >= int(self.min_evals) and self.bad_eval_streak >= int(self.patience_evals):
+        self.bad_tune_streak += 1
+        if self.num_tunes >= int(self.min_evals) and self.bad_tune_streak >= int(self.patience_evals):
             self.should_stop = True

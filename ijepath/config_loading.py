@@ -180,6 +180,8 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         raise ValueError("Unsupported config value: logging.checkpoint_every_epochs")
     if "checkpoint_every_images" in cfg.get("logging", {}):
         raise ValueError("Unsupported config value: logging.checkpoint_every_images")
+    if "step_log_every_iters" in cfg.get("logging", {}):
+        raise ValueError("Unsupported config value: logging.step_log_every_iters")
     if "log_every_images" in cfg.get("wandb", {}):
         raise ValueError("Unsupported config value: wandb.log_every_images")
     if "schedule" in cfg.get("tuning", {}):
@@ -231,6 +233,18 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
     if training_save_every is not None and int(training_save_every) <= 0:
         raise ValueError("training.save_every must be > 0")
 
+    step_log_every_images = cfg.get("logging", {}).get("step_log_every_images", 0)
+    if isinstance(step_log_every_images, bool):
+        raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
+    if isinstance(step_log_every_images, int):
+        if int(step_log_every_images) < 0:
+            raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
+    elif isinstance(step_log_every_images, float):
+        if float(step_log_every_images) < 0.0 or float(step_log_every_images) > 1.0:
+            raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
+    else:
+        raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
+
     tune_every = cfg.get("tuning", {}).get("tune_every", None)
     if tune_every is not None and int(tune_every) <= 0:
         raise ValueError("tuning.tune_every must be > 0")
@@ -250,6 +264,22 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
             "data.high_anchor_pass_warning_threshold must be > "
             "data.low_anchor_pass_warning_threshold"
         )
+
+    anchor_stream_batch_size = int(cfg.get("data", {}).get("anchor_stream_batch_size", 2048))
+    if anchor_stream_batch_size <= 0:
+        raise ValueError("data.anchor_stream_batch_size must be > 0")
+
+    perf_debug_cfg = dict(cfg.get("logging", {}).get("performance_debug", {}) or {})
+    if bool(perf_debug_cfg.get("enable", False)):
+        perf_log_every_images = int(perf_debug_cfg.get("log_every_images", 2048))
+        if perf_log_every_images <= 0:
+            raise ValueError("logging.performance_debug.log_every_images must be > 0")
+        perf_slow_step_ms = float(perf_debug_cfg.get("slow_step_ms", 250.0))
+        if perf_slow_step_ms <= 0:
+            raise ValueError("logging.performance_debug.slow_step_ms must be > 0")
+        perf_slow_data_wait_ms = float(perf_debug_cfg.get("slow_data_wait_ms", 50.0))
+        if perf_slow_data_wait_ms <= 0:
+            raise ValueError("logging.performance_debug.slow_data_wait_ms must be > 0")
 
     targets_per_context = int(cfg["data"]["targets_per_context"])
     mask_cfg = cfg.setdefault("mask", {})
@@ -283,9 +313,24 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
     if coalesce_policy != "newest":
         raise ValueError("tuning.execution.coalesce_policy must be 'newest'")
 
-    poll_every_steps = int(execution_cfg.get("poll_every_steps", 10))
-    if poll_every_steps <= 0:
-        raise ValueError("tuning.execution.poll_every_steps must be > 0")
+    poll_every_steps_raw = execution_cfg.get("poll_every_steps", "auto")
+    if poll_every_steps_raw is None:
+        pass
+    elif isinstance(poll_every_steps_raw, str):
+        poll_token = poll_every_steps_raw.strip().lower()
+        if poll_token not in {"auto", ""}:
+            try:
+                poll_every_steps = int(poll_token)
+            except ValueError as exc:
+                raise ValueError(
+                    "tuning.execution.poll_every_steps must be 'auto' or > 0 integer"
+                ) from exc
+            if poll_every_steps <= 0:
+                raise ValueError("tuning.execution.poll_every_steps must be 'auto' or > 0 integer")
+    else:
+        poll_every_steps = int(poll_every_steps_raw)
+        if poll_every_steps <= 0:
+            raise ValueError("tuning.execution.poll_every_steps must be 'auto' or > 0 integer")
 
     keep_last_n_snapshots = int(execution_cfg.get("keep_last_n_snapshots", 2))
     if keep_last_n_snapshots < 0:
@@ -395,7 +440,7 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
             section_every_n = int(section_cfg.get("every_n_evals", default_every))
             if section_every_n != 1:
                 raise ValueError(
-                    "tuning.early_stopping.selection.metric cadence must run every eval "
+                    "tuning.early_stopping.selection.metric cadence must run every tune event "
                     f"(set tuning.plugins.pathorob.{selected_section}.every_n_evals=1)"
                 )
 

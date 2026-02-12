@@ -7,6 +7,7 @@ data:
   anchor_catalog_manifest: data/3-center-prostate/indexes/anchor_catalog_manifest.json
   batch_size_per_gpu: 32
   num_workers: 16
+  anchor_stream_batch_size: 2048  # Increase (e.g. 4096/8192) to reduce parquet rollover micro-stalls.
 
 meta:
   architecture: vit_small
@@ -36,7 +37,7 @@ tuning:
     device: auto  # Auto-reserve one GPU for tuning (use cuda:<id> to pin manually).
     max_pending_jobs: 2  # Bound pending eval jobs so queue growth stays controlled.
     coalesce_policy: newest  # Keep newest queued eval requests when backlog occurs.
-    poll_every_steps: 10  # Poll completed async tune jobs every N train steps.
+    poll_every_steps: auto  # Auto = round(tune_every / (global_batch_size * 20)); set int to override.
     fail_on_backlog: false  # True => fail fast on full queue; false => drop stale queued evals.
     keep_last_n_snapshots: 2  # Limit on-disk teacher snapshots retained by async tuner.
   data_dir: /data/pathology/projects/clement/discern/data/eval
@@ -86,8 +87,8 @@ tuning:
       plugin: pathorob
       dataset: camelyon
       metric: apd_avg
-    patience_evals: 5  # Stop after this many non-improving tuning evaluations.
-    min_evals: 3  # Minimum number of evaluations before stop condition is allowed.
+    patience_evals: 5  # Stop after this many non-improving tuning runs.
+    min_evals: 3  # Minimum number of tuning runs before stop condition is allowed.
     stop_training: false  # If true, terminate JEPA training once the early-stopping criterion is met.
     save_best_checkpoint: true
     best_checkpoint_name: best-robustness.pth.tar
@@ -99,7 +100,12 @@ training:
 logging:
   folder: outputs/${wandb.exp_name}
   write_tag: jepa-pathorob
-  step_log_every_iters: 0
+  step_log_every_images: 0  # int images or float fraction in [0,1] (e.g. 10000 or 0.1); 0 disables cadence logs; "10%" is invalid.
+  performance_debug:
+    enable: false  # Set true temporarily to diagnose periodic loader stalls.
+    log_every_images: 2048  # With global_batch_size=64, this is roughly every 32 optimizer steps.
+    slow_step_ms: 250.0  # Step-level alert threshold for full iteration loop.
+    slow_data_wait_ms: 50.0  # DataLoader wait alert threshold.
 
 wandb:
   enable: true

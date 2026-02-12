@@ -35,9 +35,12 @@ from ijepath.utils.log_utils import setup_logging
 from ijepath.utils.tensors import repeat_interleave_batch
 
 default_training_save_every = 1_000_000
-default_step_log_every_iters = 0
+default_step_log_every_images = 0
 default_training_log_every = 100_000
 default_tune_every_images = 1_000_000
+default_perf_debug_log_every_images = 2_048
+default_perf_debug_slow_step_ms = 250.0
+default_perf_debug_slow_data_wait_ms = 50.0
 
 _GLOBAL_SEED = 0
 np.random.seed(_GLOBAL_SEED)
@@ -74,12 +77,22 @@ def flatten_teacher_targets_for_predictor_order(
     return teacher
 
 
-def should_log_iteration(itr: int, step_log_every_iters: int, loss: float) -> bool:
-    if np.isnan(loss) or np.isinf(loss):
-        return True
-    if step_log_every_iters <= 0:
-        return False
-    return (itr % step_log_every_iters) == 0
+def resolve_step_log_every_images(logging_cfg: dict, total_images_budget: int) -> int:
+    raw_value = logging_cfg.get("step_log_every_images", default_step_log_every_images)
+    if isinstance(raw_value, bool):
+        raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
+    if isinstance(raw_value, int):
+        if int(raw_value) < 0:
+            raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
+        return int(raw_value)
+    if isinstance(raw_value, float):
+        value = float(raw_value)
+        if value < 0.0 or value > 1.0:
+            raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
+        if value == 0.0:
+            return 0
+        return max(1, int(round(float(total_images_budget) * value)))
+    raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
 
 
 def resolve_use_bfloat16(requested_use_bfloat16: bool, cuda_available: bool) -> bool:
@@ -98,6 +111,60 @@ def resolve_training_log_every(training_cfg: dict) -> int:
     if interval <= 0:
         raise ValueError("training.log_every must be > 0")
     return interval
+
+
+def resolve_performance_debug_config(logging_cfg: dict) -> dict[str, float | int | bool]:
+    perf_cfg = dict(logging_cfg.get("performance_debug", {}) or {})
+    enabled = bool(perf_cfg.get("enable", False))
+    log_every_images = int(perf_cfg.get("log_every_images", default_perf_debug_log_every_images))
+    slow_step_ms = float(perf_cfg.get("slow_step_ms", default_perf_debug_slow_step_ms))
+    slow_data_wait_ms = float(perf_cfg.get("slow_data_wait_ms", default_perf_debug_slow_data_wait_ms))
+    if enabled:
+        if log_every_images <= 0:
+            raise ValueError("logging.performance_debug.log_every_images must be > 0")
+        if slow_step_ms <= 0:
+            raise ValueError("logging.performance_debug.slow_step_ms must be > 0")
+        if slow_data_wait_ms <= 0:
+            raise ValueError("logging.performance_debug.slow_data_wait_ms must be > 0")
+    return {
+        "enable": enabled,
+        "log_every_images": log_every_images,
+        "slow_step_ms": slow_step_ms,
+        "slow_data_wait_ms": slow_data_wait_ms,
+    }
+
+
+def resolve_tune_poll_every_steps(
+    *,
+    tuning_execution_cfg: dict,
+    tune_every_images: int,
+    global_batch_size: int,
+) -> int:
+    raw_value = tuning_execution_cfg.get("poll_every_steps", "auto")
+    if raw_value is None:
+        raw_value = "auto"
+
+    if isinstance(raw_value, str):
+        token = raw_value.strip().lower()
+        if token in {"", "auto"}:
+            if int(tune_every_images) <= 0:
+                raise ValueError("tune_every_images must be > 0")
+            if int(global_batch_size) <= 0:
+                raise ValueError("global_batch_size must be > 0")
+            derived = int(round(float(tune_every_images) / float(int(global_batch_size) * 20)))
+            return max(1, int(derived))
+        try:
+            poll_every_steps = int(token)
+        except ValueError as exc:
+            raise ValueError("tuning.execution.poll_every_steps must be 'auto' or > 0 integer") from exc
+        if poll_every_steps <= 0:
+            raise ValueError("tuning.execution.poll_every_steps must be 'auto' or > 0 integer")
+        return int(poll_every_steps)
+
+    poll_every_steps = int(raw_value)
+    if poll_every_steps <= 0:
+        raise ValueError("tuning.execution.poll_every_steps must be 'auto' or > 0 integer")
+    return int(poll_every_steps)
 
 
 def resolve_effective_save_every(
@@ -254,16 +321,16 @@ def compute_anchor_pass_budget(
     anchor_passes_total = float(total_images_budget) / float(anchor_count)
     coverage_first_pass = min(1.0, anchor_passes_total)
     mean_anchor_reuse = max(0.0, anchor_passes_total - 1.0)
-    expected_eval_events = int(total_images_budget // interval_images)
+    expected_tune_events = int(total_images_budget // interval_images)
     if run_baseline_at_zero:
-        expected_eval_events += 1
+        expected_tune_events += 1
 
     return {
         "anchor_count": int(anchor_count),
         "anchor_passes_total": float(anchor_passes_total),
         "coverage_first_pass": float(coverage_first_pass),
         "mean_anchor_reuse": float(mean_anchor_reuse),
-        "expected_eval_events": int(expected_eval_events),
+        "expected_tune_events": int(expected_tune_events),
     }
 
 
@@ -304,6 +371,7 @@ def build_pass_train_results(
 
 def get_train_step_csv_columns() -> tuple[tuple[str, str], ...]:
     return (
+        ("%d", "images_seen"),
         ("%d", "pass_index"),
         ("%d", "iteration"),
         ("%.5f", "loss"),
@@ -317,6 +385,7 @@ def get_train_step_csv_columns() -> tuple[tuple[str, str], ...]:
 
 def build_step_log_line(
     *,
+    images_seen: int,
     pass_index: int,
     iteration: int,
     loss_avg: float,
@@ -328,7 +397,7 @@ def build_step_log_line(
     iteration_time_ms: float,
 ) -> str:
     return (
-        f"pass_index={int(pass_index)} iteration={int(iteration)} "
+        f"images_seen={int(images_seen)} pass_index={int(pass_index)} iteration={int(iteration)} "
         f"loss_avg={float(loss_avg):.3f} "
         f"context_keep_tokens={float(context_keep_tokens):.1f} "
         f"target_predict_tokens={float(target_predict_tokens):.1f} "
@@ -341,6 +410,7 @@ def build_step_log_line(
 
 def build_grad_stats_log_line(
     *,
+    images_seen: int,
     pass_index: int,
     iteration: int,
     first_layer_grad_norm: float,
@@ -349,7 +419,7 @@ def build_grad_stats_log_line(
     grad_max: float,
 ) -> str:
     return (
-        f"pass_index={int(pass_index)} iteration={int(iteration)} "
+        f"images_seen={int(images_seen)} pass_index={int(pass_index)} iteration={int(iteration)} "
         f"first_layer_grad_norm={float(first_layer_grad_norm):.2e} "
         f"last_layer_grad_norm={float(last_layer_grad_norm):.2e} "
         f"grad_norm_min={float(grad_min):.2e} "
@@ -490,6 +560,7 @@ def main(
     persistent_workers = bool(args["data"].get("persistent_workers", True))
     prefetch_factor = int(args["data"].get("prefetch_factor", 4))
     max_open_slides_per_worker = int(args["data"].get("max_open_slides_per_worker", 16))
+    anchor_stream_batch_size = int(args["data"].get("anchor_stream_batch_size", 2048))
     wsi_backend = str(args["data"].get("wsi_backend", "asap"))
     low_anchor_pass_warning_threshold = float(args["data"].get("low_anchor_pass_warning_threshold", 1.0))
     high_anchor_pass_warning_threshold = float(args["data"].get("high_anchor_pass_warning_threshold", 5.0))
@@ -541,14 +612,27 @@ def main(
     # -- LOGGING
     folder = args["logging"]["folder"]
     tag = args["logging"]["write_tag"]
-    step_log_every_iters = int(
-        args["logging"].get("step_log_every_iters", default_step_log_every_iters)
+    step_log_every_images_raw = args["logging"].get(
+        "step_log_every_images",
+        default_step_log_every_images,
     )
-    if step_log_every_iters < 0:
-        raise ValueError("logging.step_log_every_iters must be >= 0")
+    step_log_every_images = resolve_step_log_every_images(
+        args["logging"],
+        total_images_budget=int(total_images_budget),
+    )
+    expected_step_log_events = (
+        int(math.ceil(float(total_images_budget) / float(step_log_every_images)))
+        if step_log_every_images > 0
+        else 0
+    )
     training_cfg = dict(args.get("training", {}) or {})
     training_save_every = resolve_training_save_every(training_cfg)
     training_log_every = resolve_training_log_every(training_cfg)
+    perf_debug_cfg = resolve_performance_debug_config(args.get("logging", {}))
+    perf_debug_enabled = bool(perf_debug_cfg["enable"])
+    perf_debug_log_every_images = int(perf_debug_cfg["log_every_images"])
+    perf_debug_slow_step_ms = float(perf_debug_cfg["slow_step_ms"])
+    perf_debug_slow_data_wait_ms = float(perf_debug_cfg["slow_data_wait_ms"])
 
     os.makedirs(folder, exist_ok=True)
 
@@ -576,6 +660,14 @@ def main(
     args["data"]["world_size"] = world_size
     args["data"]["context_input_size_px"] = context_input_size_px
     args["data"]["target_input_size_px"] = target_input_size_px
+    args["data"]["anchor_stream_batch_size"] = anchor_stream_batch_size
+    args.setdefault("logging", {})
+    args["logging"]["performance_debug"] = {
+        "enable": perf_debug_enabled,
+        "log_every_images": perf_debug_log_every_images,
+        "slow_step_ms": perf_debug_slow_step_ms,
+        "slow_data_wait_ms": perf_debug_slow_data_wait_ms,
+    }
     args.setdefault("optimization", {})
     args["optimization"]["total_steps"] = total_steps
 
@@ -600,8 +692,10 @@ def main(
         f" - global_batch_size={global_batch_size}"
     )
     logger.info(
-        "Iteration logging cadence:\n"
-        f" - step_log_every_iters={step_log_every_iters} (0 disables per-step logs)"
+        "Step logging cadence:\n"
+        f" - logging.step_log_every_images(raw)={step_log_every_images_raw!r}\n"
+        f" - logging.step_log_every_images(resolved)={step_log_every_images:,}\n"
+        f" - expected_step_log_events={expected_step_log_events:,}"
     )
     logger.info(
         "Image-budget control:\n"
@@ -613,6 +707,13 @@ def main(
         "Train logging cadence:\n"
         f" - training.log_every={training_log_every:,}"
     )
+    if perf_debug_enabled:
+        logger.info(
+            "Performance debug logging enabled:\n"
+            f" - log_every_images={perf_debug_log_every_images:,}\n"
+            f" - slow_step_ms={perf_debug_slow_step_ms:.1f}\n"
+            f" - slow_data_wait_ms={perf_debug_slow_data_wait_ms:.1f}"
+        )
 
     log_file = os.path.join(folder, f"{tag}_r{rank}.csv")
     latest_path = os.path.join(folder, f"{tag}-latest.pth.tar")
@@ -676,6 +777,7 @@ def main(
         persistent_workers=persistent_workers,
         prefetch_factor=prefetch_factor,
         max_open_slides_per_worker=max_open_slides_per_worker,
+        anchor_stream_batch_size=anchor_stream_batch_size,
     )
     ipe = len(unsupervised_loader)
     if ipe <= 0:
@@ -822,14 +924,14 @@ def main(
         run_baseline_at_zero=run_baseline_at_zero,
     )
     if not tuning_enabled_cfg:
-        anchor_budget["expected_eval_events"] = 0
+        anchor_budget["expected_tune_events"] = 0
     logger.info(
         "Anchor diversity budget:\n"
         f" - anchor_count={int(anchor_budget['anchor_count']):,}\n"
         f" - total_images_budget={int(total_images_budget):,}\n"
         f" - coverage_first_pass={float(anchor_budget['coverage_first_pass']):.2f}\n"
         f" - mean_anchor_reuse={float(anchor_budget['mean_anchor_reuse']):.2f}\n"
-        f" - expected_eval_events={int(anchor_budget['expected_eval_events']):,}"
+        f" - expected_tune_events={int(anchor_budget['expected_tune_events']):,}"
     )
     if float(anchor_budget["anchor_passes_total"]) < float(low_anchor_pass_warning_threshold):
         logger.warning(
@@ -845,12 +947,19 @@ def main(
         )
 
     total_passes = compute_total_passes(total_steps=total_steps, steps_per_pass=ipe)
+    tuning_execution_cfg = dict(tuning_cfg.get("execution", {}) or {})
+    tune_poll_every_steps = resolve_tune_poll_every_steps(
+        tuning_execution_cfg=tuning_execution_cfg,
+        tune_every_images=int(tune_every_images),
+        global_batch_size=int(global_batch_size),
+    )
     expected_train_log_events = int(math.ceil(float(total_images_budget) / float(training_log_every)))
     logger.info(
         "Cadence vs image budget:\n"
         f" - training.log_every={training_log_every:,} (~{expected_train_log_events:,} train logs over budget)\n"
         f" - tuning.tune_every={tune_every_images:,} "
-        f"(enabled={tuning_enabled_cfg}, expected_eval_events={int(anchor_budget['expected_eval_events']):,})\n"
+        f"(enabled={tuning_enabled_cfg}, expected_tune_events={int(anchor_budget['expected_tune_events']):,})\n"
+        f" - tuning.execution.poll_every_steps={int(tune_poll_every_steps):,}\n"
         f" - effective_checkpoint_save_every={effective_save_every:,}"
     )
     logger.info(
@@ -863,9 +972,7 @@ def main(
     tuning_runtime = None
     early_stopper = None
     early_stop_cfg = dict(tuning_cfg.get("early_stopping", {}) or {})
-    tuning_execution_cfg = dict(tuning_cfg.get("execution", {}) or {})
-    tune_poll_every_steps = int(tuning_execution_cfg.get("poll_every_steps", 10))
-    pending_eval_snapshots: dict[int, dict] = {}
+    pending_tune_snapshots: dict[int, dict] = {}
     tuning_output_dir = Path(folder) / "tuning"
     tuning_snapshots_dir = tuning_output_dir / "snapshots"
     tuning_snapshots_dir.mkdir(parents=True, exist_ok=True)
@@ -903,13 +1010,17 @@ def main(
 
     next_checkpoint_images = int((images_seen // effective_save_every) + 1) * int(effective_save_every)
     next_wandb_log_images = int((images_seen // training_log_every) + 1) * int(training_log_every)
+    if step_log_every_images > 0:
+        next_step_log_images = int((images_seen // step_log_every_images) + 1) * int(step_log_every_images)
+    else:
+        next_step_log_images = 0
     if tuning_enabled_cfg:
         next_tune_images = int((images_seen // tune_every_images) + 1) * int(tune_every_images)
     else:
         next_tune_images = 0
-    eval_index = int(images_seen // tune_every_images) if tuning_enabled_cfg else 0
+    tune_index = int(images_seen // tune_every_images) if tuning_enabled_cfg else 0
     if tuning_enabled_cfg and run_baseline_at_zero and images_seen > 0:
-        eval_index += 1
+        tune_index += 1
 
     wandb_loss_meter = AverageMeter()
     wandb_maskA_meter = AverageMeter()
@@ -922,10 +1033,10 @@ def main(
     wandb_window_last_wd = float("nan")
     last_wandb_train_log_images = int(images_seen)
 
-    def enqueue_tuning_eval(
+    def enqueue_tuning_job(
         *,
-        eval_index_value: int,
-        eval_images_seen: int,
+        tune_index_value: int,
+        tune_images_seen: int,
         early_stop_snapshot: dict,
         images_seen_at_log: int,
     ) -> None:
@@ -933,25 +1044,25 @@ def main(
             return
 
         teacher_backbone = target_encoder.module if hasattr(target_encoder, "module") else target_encoder
-        snapshot_path = tuning_snapshots_dir / f"teacher_eval_{int(eval_index_value):06d}.pth"
+        snapshot_path = tuning_snapshots_dir / f"teacher_tune_{int(tune_index_value):06d}.pth"
         torch.save(teacher_backbone.state_dict(), snapshot_path)
         queue_stats = tuning_runtime.submit(
-            eval_index=int(eval_index_value),
-            images_seen=int(eval_images_seen),
+            tune_index=int(tune_index_value),
+            images_seen=int(tune_images_seen),
             snapshot_path=str(snapshot_path),
         )
-        pending_eval_snapshots[int(eval_index_value)] = dict(early_stop_snapshot)
+        pending_tune_snapshots[int(tune_index_value)] = dict(early_stop_snapshot)
 
         if wandb_enabled:
             queue_log: dict[str, float | int] = {
-                "images_seen": int(eval_images_seen),
+                "images_seen": int(tune_images_seen),
                 "train/images_seen_at_log": int(images_seen_at_log),
             }
             queue_metrics = {
-                "eval_index": int(eval_index_value),
-                "eval_images_seen": int(eval_images_seen),
+                "tune_index": int(tune_index_value),
+                "tune_images_seen": int(tune_images_seen),
                 "queue_depth": int(queue_stats.get("queue_depth", 0)),
-                "dropped_evals": int(queue_stats.get("dropped_evals", 0)),
+                "dropped_tunes": int(queue_stats.get("dropped_tunes", 0)),
             }
             update_log_dict("tune", queue_metrics, queue_log, step="images_seen")
             log_dict(queue_log)
@@ -965,23 +1076,23 @@ def main(
         for event in completed:
             if event.get("error") is not None:
                 raise RuntimeError(
-                    "Async tuning evaluation failed "
-                    f"(eval_index={event.get('eval_index')}): {event.get('error')}\n"
+                    "Async tuning run failed "
+                    f"(tune_index={event.get('tune_index')}): {event.get('error')}\n"
                     f"{event.get('traceback') or ''}"
                 )
 
             tune_results = dict(event.get("result") or {})
             tune_metrics = dict(tune_results.get("log_metrics", {}) or {})
-            event_eval_index = int(event.get("eval_index", -1))
+            event_tune_index = int(event.get("tune_index", -1))
             event_images_seen = int(event.get("images_seen", 0))
             event_latency = float(event.get("latency_seconds", 0.0))
             event_worker_seconds = float(event.get("worker_seconds", 0.0))
 
             if tune_metrics:
                 logger.info(
-                    "Async tuning results at images_seen=%d (eval_index=%d): %s",
+                    "Async tuning results at images_seen=%d (tune_index=%d): %s",
                     event_images_seen,
-                    event_eval_index,
+                    event_tune_index,
                     ", ".join(f"{k}={v:.5f}" for k, v in sorted(tune_metrics.items())),
                 )
 
@@ -991,10 +1102,10 @@ def main(
                     "train/images_seen_at_log": int(images_seen_at_log),
                 }
                 tune_infra_metrics = {
-                    "eval_index": int(event_eval_index),
-                    "eval_images_seen": int(event_images_seen),
+                    "tune_index": int(event_tune_index),
+                    "tune_images_seen": int(event_images_seen),
                     "queue_depth": int(tuning_runtime.queue_depth()),
-                    "dropped_evals": int(tuning_runtime.dropped_evals()),
+                    "dropped_tunes": int(tuning_runtime.dropped_tunes()),
                     "result_lag_images": int(max(0, int(images_seen_at_log) - int(event_images_seen))),
                     "result_lag_seconds": float(event_latency),
                     "worker_seconds": float(event_worker_seconds),
@@ -1005,7 +1116,7 @@ def main(
                     update_log_dict("tune", tune_metrics, tune_log, step="images_seen")
                 log_dict(tune_log)
 
-            snapshot = pending_eval_snapshots.pop(event_eval_index, None)
+            snapshot = pending_tune_snapshots.pop(event_tune_index, None)
             if early_stopper is not None:
                 selection = tune_results.get("selection")
                 if selection is not None and selection.get("metric_value") is not None:
@@ -1014,7 +1125,7 @@ def main(
                             pass_id=max(0, pass_index),
                             loss_avg=float("nan"),
                         )
-                    early_stopper.on_eval(
+                    early_stopper.on_tune(
                         metric_value=float(selection["metric_value"]),
                         snapshot=snapshot,
                     )
@@ -1029,16 +1140,29 @@ def main(
         return bool(int(flag_tensor.item()))
 
     should_stop_training = False
+    if perf_debug_enabled:
+        perf_data_wait_meter = AverageMeter()
+        perf_h2d_meter = AverageMeter()
+        perf_compute_meter = AverageMeter()
+        perf_tune_poll_meter = AverageMeter()
+        perf_overhead_meter = AverageMeter()
+        perf_loop_meter = AverageMeter()
+        perf_cache_open_meter = AverageMeter()
+        perf_cache_hit_count = 0
+        perf_cache_miss_count = 0
+        perf_cache_eviction_count = 0
+        perf_cache_sample_count = 0
+        perf_next_log_images = int(perf_debug_log_every_images)
     try:
         if tuning_enabled_cfg and run_baseline_at_zero and images_seen == 0:
             if rank == 0 and tuning_runtime is not None:
-                enqueue_tuning_eval(
-                    eval_index_value=0,
-                    eval_images_seen=0,
+                enqueue_tuning_job(
+                    tune_index_value=0,
+                    tune_images_seen=0,
                     early_stop_snapshot=build_snapshot(pass_id=0, loss_avg=float("nan")),
                     images_seen_at_log=0,
                 )
-            eval_index = max(eval_index, 1)
+            tune_index = max(tune_index, 1)
 
         while steps_done < total_steps and not should_stop_training:
             pass_start = time.time()
@@ -1076,17 +1200,35 @@ def main(
                 for itr in range(ipe):
                     if steps_done >= total_steps or should_stop_training:
                         break
-                    iter_wall_start = time.time()
+                    iter_wall_start = time.perf_counter()
+                    data_wait_start = time.perf_counter()
                     try:
                         batch_data, masks_enc, masks_pred = next(loader_iter)
                     except StopIteration:
                         loader_iter = iter(unsupervised_loader)
                         batch_data, masks_enc, masks_pred = next(loader_iter)
+                    data_wait_ms = float((time.perf_counter() - data_wait_start) * 1_000.0)
+                    sample_metadata = batch_data.get("sample_metadata", [])
+                    batch_cache_hits = int(
+                        sum(int(meta.get("reader_cache_hit", 0)) for meta in sample_metadata)
+                    )
+                    batch_cache_misses = int(
+                        sum(int(meta.get("reader_cache_miss", 0)) for meta in sample_metadata)
+                    )
+                    batch_cache_evictions = int(
+                        sum(int(meta.get("reader_cache_evictions_on_event", 0)) for meta in sample_metadata)
+                    )
+                    batch_cache_samples = int(len(sample_metadata))
+                    batch_cache_miss_ratio = float(
+                        float(batch_cache_misses) / float(max(1, batch_cache_samples))
+                    )
 
+                    host_to_device_start = time.perf_counter()
                     context_imgs = batch_data["context_images"].to(device, non_blocking=True)
                     target_imgs = batch_data["target_images"].to(device, non_blocking=True)
                     masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
                     masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
+                    host_to_device_ms = float((time.perf_counter() - host_to_device_start) * 1_000.0)
                     validate_encoder_input_sizes(
                         context_images=context_imgs,
                         target_images=target_imgs,
@@ -1171,6 +1313,7 @@ def main(
                     time_meter.update(etime)
 
                     csv_logger.log(
+                        images_seen,
                         current_pass_index,
                         itr,
                         loss,
@@ -1200,17 +1343,22 @@ def main(
                         wandb_window_last_wd = float(pass_last_wd)
                         wandb_window_seconds += max(0.0, float(time.time() - iter_wall_start))
 
-                    if should_log_iteration(
-                        itr=itr,
-                        step_log_every_iters=step_log_every_iters,
-                        loss=float(loss),
-                    ):
+                    crossed_step_logs = []
+                    if step_log_every_images > 0:
+                        crossed_step_logs, next_step_log_images = crossed_image_thresholds(
+                            prev_images_seen=prev_images_seen,
+                            new_images_seen=images_seen,
+                            next_threshold=next_step_log_images,
+                            interval=step_log_every_images,
+                        )
+                    if crossed_step_logs or np.isnan(loss) or np.isinf(loss):
                         if torch.cuda.is_available():
                             max_mem_mb = torch.cuda.max_memory_allocated() / 1024.0**2
                         else:
                             max_mem_mb = 0.0
                         logger.info(
                             build_step_log_line(
+                                images_seen=int(images_seen),
                                 pass_index=current_pass_index,
                                 iteration=itr,
                                 loss_avg=float(loss_meter.avg),
@@ -1225,6 +1373,7 @@ def main(
                         if grad_stats is not None:
                             logger.info(
                                 build_grad_stats_log_line(
+                                    images_seen=int(images_seen),
                                     pass_index=current_pass_index,
                                     iteration=itr,
                                     first_layer_grad_norm=float(grad_stats.first_layer),
@@ -1312,22 +1461,118 @@ def main(
                         crossed_tune = []
 
                     for crossed in crossed_tune:
-                        current_eval_index = int(eval_index)
+                        current_tune_index = int(tune_index)
                         if rank == 0 and tuning_runtime is not None:
-                            enqueue_tuning_eval(
-                                eval_index_value=current_eval_index,
-                                eval_images_seen=int(crossed),
+                            enqueue_tuning_job(
+                                tune_index_value=current_tune_index,
+                                tune_images_seen=int(crossed),
                                 early_stop_snapshot=build_snapshot(
                                     pass_id=current_pass_index,
                                     loss_avg=float(loss_meter.avg),
                                 ),
                                 images_seen_at_log=int(images_seen),
                             )
-                        eval_index += 1
+                        tune_index += 1
 
+                    tune_poll_ms = 0.0
                     if tuning_enabled_cfg and rank == 0 and tuning_runtime is not None:
                         if (steps_done % max(1, tune_poll_every_steps)) == 0:
+                            tune_poll_start = time.perf_counter()
                             process_tuning_completions(images_seen_at_log=int(images_seen))
+                            tune_poll_ms = float((time.perf_counter() - tune_poll_start) * 1_000.0)
+
+                    iter_loop_ms = float((time.perf_counter() - iter_wall_start) * 1_000.0)
+                    compute_ms = float(max(0.0, float(etime)))
+                    accounted_ms = data_wait_ms + host_to_device_ms + compute_ms + tune_poll_ms
+                    overhead_ms = float(max(0.0, iter_loop_ms - accounted_ms))
+                    if perf_debug_enabled and rank == 0:
+                        perf_data_wait_meter.update(data_wait_ms)
+                        perf_h2d_meter.update(host_to_device_ms)
+                        perf_compute_meter.update(compute_ms)
+                        perf_tune_poll_meter.update(tune_poll_ms)
+                        perf_overhead_meter.update(overhead_ms)
+                        perf_loop_meter.update(iter_loop_ms)
+                        perf_cache_hit_count += int(batch_cache_hits)
+                        perf_cache_miss_count += int(batch_cache_misses)
+                        perf_cache_eviction_count += int(batch_cache_evictions)
+                        perf_cache_sample_count += int(batch_cache_samples)
+                        if batch_cache_samples > 0:
+                            perf_cache_open_meter.update(
+                                float(
+                                    sum(float(meta.get("reader_cache_open_slides", 0.0)) for meta in sample_metadata)
+                                    / float(batch_cache_samples)
+                                )
+                            )
+
+                        if (
+                            iter_loop_ms >= perf_debug_slow_step_ms
+                            or data_wait_ms >= perf_debug_slow_data_wait_ms
+                        ):
+                            meta0 = sample_metadata[0] if sample_metadata else {}
+                            logger.info(
+                                "Perf spike at images_seen=%d step=%d: loop_ms=%.1f data_wait_ms=%.1f "
+                                "h2d_ms=%.1f compute_ms=%.1f tune_poll_ms=%.1f overhead_ms=%.1f "
+                                "cache(hit/miss/evict)=%d/%d/%d miss_ratio=%.2f "
+                                "stratum=%s stream_batch=%s row_in_batch=%s",
+                                int(images_seen),
+                                int(steps_done),
+                                float(iter_loop_ms),
+                                float(data_wait_ms),
+                                float(host_to_device_ms),
+                                float(compute_ms),
+                                float(tune_poll_ms),
+                                float(overhead_ms),
+                                int(batch_cache_hits),
+                                int(batch_cache_misses),
+                                int(batch_cache_evictions),
+                                float(batch_cache_miss_ratio),
+                                str(meta0.get("stratum_id", "unknown")),
+                                str(meta0.get("anchor_stream_batch_id", "n/a")),
+                                str(meta0.get("anchor_stream_row_in_batch", "n/a")),
+                            )
+
+                        crossed_perf, perf_next_log_images = crossed_image_thresholds(
+                            prev_images_seen=prev_images_seen,
+                            new_images_seen=images_seen,
+                            next_threshold=perf_next_log_images,
+                            interval=perf_debug_log_every_images,
+                        )
+                        if crossed_perf and perf_loop_meter.count > 0:
+                            logger.info(
+                                "Perf window up to images_seen=%d: loop(avg/max)=%.1f/%.1f ms "
+                                "data_wait(avg/max)=%.1f/%.1f ms h2d(avg/max)=%.1f/%.1f ms "
+                                "compute(avg/max)=%.1f/%.1f ms tune_poll(avg/max)=%.1f/%.1f ms "
+                                "overhead(avg/max)=%.1f/%.1f ms cache_hit_ratio=%.2f "
+                                "cache_miss_ratio=%.2f cache_evictions=%d cache_open_slides_avg=%.1f",
+                                int(crossed_perf[-1]),
+                                float(perf_loop_meter.avg),
+                                float(perf_loop_meter.max),
+                                float(perf_data_wait_meter.avg),
+                                float(perf_data_wait_meter.max),
+                                float(perf_h2d_meter.avg),
+                                float(perf_h2d_meter.max),
+                                float(perf_compute_meter.avg),
+                                float(perf_compute_meter.max),
+                                float(perf_tune_poll_meter.avg),
+                                float(perf_tune_poll_meter.max),
+                                float(perf_overhead_meter.avg),
+                                float(perf_overhead_meter.max),
+                                float(perf_cache_hit_count / max(1, perf_cache_sample_count)),
+                                float(perf_cache_miss_count / max(1, perf_cache_sample_count)),
+                                int(perf_cache_eviction_count),
+                                float(perf_cache_open_meter.avg if perf_cache_open_meter.count > 0 else 0.0),
+                            )
+                            perf_data_wait_meter.reset()
+                            perf_h2d_meter.reset()
+                            perf_compute_meter.reset()
+                            perf_tune_poll_meter.reset()
+                            perf_overhead_meter.reset()
+                            perf_loop_meter.reset()
+                            perf_cache_open_meter.reset()
+                            perf_cache_hit_count = 0
+                            perf_cache_miss_count = 0
+                            perf_cache_eviction_count = 0
+                            perf_cache_sample_count = 0
 
                     should_stop_training = sync_stop_flag(bool(should_stop_training))
 

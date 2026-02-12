@@ -71,6 +71,7 @@ def make_cross_resolution_loader(
     persistent_workers: bool = True,
     prefetch_factor: int = 4,
     max_open_slides_per_worker: int = 16,
+    anchor_stream_batch_size: int = 2048,
 ):
     context_size_raw_px = max(1, int(round(float(context_fov_um) / float(context_mpp))))
     target_size_raw_px = max(1, int(round(float(target_fov_um) / float(target_mpp))))
@@ -104,6 +105,7 @@ def make_cross_resolution_loader(
         sampling_stratum_key=sampling_stratum_key,
         sampling_stratum_weights=sampling_stratum_weights,
         max_open_slides_per_worker=max_open_slides_per_worker,
+        anchor_stream_batch_size=anchor_stream_batch_size,
     )
 
     collator = ContextTargetFootprintMaskCollator(

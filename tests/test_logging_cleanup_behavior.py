@@ -40,14 +40,29 @@ def test_process_main_defers_config_logging_to_trainer(monkeypatch):
     assert any("loaded layered config" in line for line in captured_logs)
 
 
-def test_should_log_iteration_respects_frequency_and_anomalies():
-    from ijepath.train_cross_resolution_jepa import should_log_iteration
+def test_resolve_step_log_every_images_supports_int_and_fraction():
+    from ijepath.train_cross_resolution_jepa import resolve_step_log_every_images
 
-    assert should_log_iteration(itr=0, step_log_every_iters=0, loss=1.0) is False
-    assert should_log_iteration(itr=10, step_log_every_iters=10, loss=1.0) is True
-    assert should_log_iteration(itr=11, step_log_every_iters=10, loss=1.0) is False
-    assert should_log_iteration(itr=3, step_log_every_iters=0, loss=float("nan")) is True
-    assert should_log_iteration(itr=3, step_log_every_iters=0, loss=float("inf")) is True
+    assert resolve_step_log_every_images({"step_log_every_images": 0}, total_images_budget=1000) == 0
+    assert resolve_step_log_every_images({"step_log_every_images": 250}, total_images_budget=1000) == 250
+    assert resolve_step_log_every_images({"step_log_every_images": 0.0}, total_images_budget=1000) == 0
+    assert resolve_step_log_every_images({"step_log_every_images": 0.1}, total_images_budget=10_000) == 1_000
+    assert resolve_step_log_every_images({"step_log_every_images": 1.0}, total_images_budget=10_000) == 10_000
+
+
+def test_resolve_step_log_every_images_rejects_invalid_values():
+    from ijepath.train_cross_resolution_jepa import resolve_step_log_every_images
+
+    with pytest.raises(ValueError, match="must be int>=0 or float in \\[0, 1\\]"):
+        resolve_step_log_every_images({"step_log_every_images": True}, total_images_budget=1000)
+    with pytest.raises(ValueError, match="must be int>=0 or float in \\[0, 1\\]"):
+        resolve_step_log_every_images({"step_log_every_images": -1}, total_images_budget=1000)
+    with pytest.raises(ValueError, match="must be int>=0 or float in \\[0, 1\\]"):
+        resolve_step_log_every_images({"step_log_every_images": 1.1}, total_images_budget=1000)
+    with pytest.raises(ValueError, match="must be int>=0 or float in \\[0, 1\\]"):
+        resolve_step_log_every_images({"step_log_every_images": "10%"}, total_images_budget=1000)
+    with pytest.raises(ValueError, match="must be int>=0 or float in \\[0, 1\\]"):
+        resolve_step_log_every_images({"step_log_every_images": "1000"}, total_images_budget=1000)
 
 
 def test_resolve_training_save_every_defaults_and_validates():
@@ -69,6 +84,46 @@ def test_resolve_training_log_every_defaults_and_validates():
     with pytest.raises(ValueError, match="training.log_every must be > 0"):
         resolve_training_log_every({"log_every": 0})
 
+
+def test_resolve_tune_poll_every_steps_auto_formula_and_override():
+    from ijepath.train_cross_resolution_jepa import resolve_tune_poll_every_steps
+
+    # auto: poll_every_steps ~= tune_every / (global_batch_size * 20)
+    assert (
+        resolve_tune_poll_every_steps(
+            tuning_execution_cfg={"poll_every_steps": "auto"},
+            tune_every_images=10_000,
+            global_batch_size=64,
+        )
+        == 8
+    )
+    # unset behaves as auto.
+    assert (
+        resolve_tune_poll_every_steps(
+            tuning_execution_cfg={},
+            tune_every_images=10_000,
+            global_batch_size=64,
+        )
+        == 8
+    )
+    # explicit override wins.
+    assert (
+        resolve_tune_poll_every_steps(
+            tuning_execution_cfg={"poll_every_steps": 3},
+            tune_every_images=10_000,
+            global_batch_size=64,
+        )
+        == 3
+    )
+    # clamp lower bound to avoid zero.
+    assert (
+        resolve_tune_poll_every_steps(
+            tuning_execution_cfg={"poll_every_steps": "auto"},
+            tune_every_images=100,
+            global_batch_size=256,
+        )
+        == 1
+    )
 
 def test_compute_total_passes_and_progress_desc_helpers():
     from ijepath.train_cross_resolution_jepa import (
@@ -156,6 +211,7 @@ def test_train_step_csv_schema_is_standardized():
     headers = [header for _, header in columns]
 
     assert headers == [
+        "images_seen",
         "pass_index",
         "iteration",
         "loss",
@@ -171,6 +227,7 @@ def test_build_step_log_line_uses_standardized_labels():
     from ijepath.train_cross_resolution_jepa import build_step_log_line
 
     line = build_step_log_line(
+        images_seen=6400,
         pass_index=2,
         iteration=12,
         loss_avg=0.3456,
@@ -182,7 +239,7 @@ def test_build_step_log_line_uses_standardized_labels():
         iteration_time_ms=11.2,
     )
 
-    assert line.startswith("pass_index=2 iteration=12")
+    assert line.startswith("images_seen=6400 pass_index=2 iteration=12")
     assert "loss_avg=0.346" in line
     assert "context_keep_tokens=18.0" in line
     assert "target_predict_tokens=64.0" in line
@@ -197,6 +254,7 @@ def test_build_grad_stats_log_line_uses_standardized_labels():
     from ijepath.train_cross_resolution_jepa import build_grad_stats_log_line
 
     line = build_grad_stats_log_line(
+        images_seen=6400,
         pass_index=3,
         iteration=7,
         first_layer_grad_norm=1.23e-2,
@@ -205,7 +263,7 @@ def test_build_grad_stats_log_line_uses_standardized_labels():
         grad_max=9.99e-1,
     )
 
-    assert line.startswith("pass_index=3 iteration=7")
+    assert line.startswith("images_seen=6400 pass_index=3 iteration=7")
     assert "first_layer_grad_norm=1.23e-02" in line
     assert "last_layer_grad_norm=4.56e-02" in line
     assert "grad_norm_min=7.89e-04" in line
@@ -265,6 +323,47 @@ def test_init_opt_uses_total_steps_for_schedule_horizon():
     # WarmupCosineSchedule stores post-warmup span.
     assert scheduler.T_max == 115
     assert wd_scheduler.T_max == 125
+
+
+def test_load_checkpoint_ignores_legacy_epoch_fallback(monkeypatch):
+    from ijepath import helper
+
+    checkpoint = {
+        "epoch": 7,
+        "encoder": {},
+        "predictor": {},
+        "target_encoder": {},
+        "opt": {},
+    }
+    monkeypatch.setattr(helper.torch, "load", lambda *_args, **_kwargs: checkpoint)
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        helper.logger,
+        "warning",
+        lambda msg, *args: warnings.append(msg % args if args else str(msg)),
+    )
+
+    class _Dummy:
+        def load_state_dict(self, *_args, **_kwargs):
+            return "ok"
+
+    class _DummyOpt:
+        def load_state_dict(self, *_args, **_kwargs):
+            return None
+
+    _e, _p, _t, _o, _s, pass_index = helper.load_checkpoint(
+        device="cpu",
+        r_path="/tmp/fake.ckpt",
+        encoder=_Dummy(),
+        predictor=_Dummy(),
+        target_encoder=_Dummy(),
+        opt=_DummyOpt(),
+        scaler=None,
+    )
+
+    assert pass_index == 0
+    assert any("legacy 'epoch'" in line for line in warnings)
 
 
 def test_launch_worker_processes_waits_for_all_children(monkeypatch):

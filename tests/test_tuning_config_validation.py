@@ -221,7 +221,7 @@ def test_tuning_requires_async_execution_device(tmp_path: Path):
         load_training_config(config_file=str(cfg_path))
 
 
-def test_tuning_early_stopping_selection_requires_every_eval_cadence(tmp_path: Path):
+def test_tuning_early_stopping_selection_requires_every_tune_event_cadence(tmp_path: Path):
     cfg_path = tmp_path / "cfg.yaml"
     cfg = _base_cfg()
     cfg["tuning"] = {
@@ -242,7 +242,7 @@ def test_tuning_early_stopping_selection_requires_every_eval_cadence(tmp_path: P
     }
     _write_yaml(cfg_path, cfg)
 
-    with pytest.raises(ValueError, match="cadence must run every eval"):
+    with pytest.raises(ValueError, match="cadence must run every tune event"):
         load_training_config(config_file=str(cfg_path))
 
 
@@ -257,3 +257,16 @@ def test_tuning_accepts_auto_execution_device(tmp_path: Path):
     _write_yaml(cfg_path, cfg)
     loaded = load_training_config(config_file=str(cfg_path))
     assert loaded["tuning"]["execution"]["device"] == "auto"
+
+
+def test_tuning_accepts_auto_poll_every_steps(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg = _base_cfg()
+    cfg["tuning"] = {
+        "enable": True,
+        "execution": {"mode": "async", "device": "auto", "poll_every_steps": "auto"},
+        "plugins": [],
+    }
+    _write_yaml(cfg_path, cfg)
+    loaded = load_training_config(config_file=str(cfg_path))
+    assert loaded["tuning"]["execution"]["poll_every_steps"] == "auto"

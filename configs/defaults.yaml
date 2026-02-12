@@ -16,6 +16,7 @@ data:
   persistent_workers: true
   prefetch_factor: 4
   max_open_slides_per_worker: 16
+  anchor_stream_batch_size: 2048  # Parquet rows decoded per reader batch; larger values reduce rollover frequency.
 
   # -- Cross-resolution geometry (override in profile config)
   # Final model tensor sizes are derived as nearest multiples of meta.patch_size:
@@ -78,7 +79,7 @@ tuning:
     device: auto  # auto = reserve one visible GPU for tuning; or set cuda:<id> explicitly.
     max_pending_jobs: 2  # Max queued eval snapshots before coalescing/dropping kicks in.
     coalesce_policy: newest  # Keep newest requests under backlog pressure (drop older queued evals).
-    poll_every_steps: 10  # Training loop polls async tuning results every N optimizer steps.
+    poll_every_steps: auto  # Auto = round(tune_every / (global_batch_size * 20)); set int to override.
     fail_on_backlog: false  # If true, raise when queue is full instead of dropping stale queued evals.
     keep_last_n_snapshots: 2  # Keep at most N evaluator snapshot files on disk.
   # PathoROB plugin knobs are configured under tuning.plugins[*], including:
@@ -91,8 +92,8 @@ tuning:
       plugin: null
       dataset: null
       metric: null
-    patience_evals: 5  # Stop after this many non-improving tuning evaluations.
-    min_evals: 3  # Minimum number of evaluations before stop condition is allowed.
+    patience_evals: 5  # Stop after this many non-improving tuning runs.
+    min_evals: 3  # Minimum number of tuning runs before stop condition is allowed.
     stop_training: false  # If true, terminate JEPA training once the early-stopping criterion is met.
     save_best_checkpoint: true
     best_checkpoint_name: best-robustness.pth.tar
@@ -100,7 +101,12 @@ tuning:
 logging:
   folder: outputs/train
   write_tag: jepa
-  step_log_every_iters: 0  # 0 => disable per-step terminal logs and rely on per-pass summaries.
+  step_log_every_images: 0  # int images or float fraction in [0,1] (e.g. 10000 or 0.1); 0 disables cadence logs; "10%" is invalid.
+  performance_debug:
+    enable: false  # Opt-in step timing breakdown logs (data wait, H2D transfer, compute, tune poll, overhead).
+    log_every_images: 2048  # Emit rolling performance summary every N images seen.
+    slow_step_ms: 250.0  # Emit immediate spike logs when end-to-end step loop exceeds this threshold.
+    slow_data_wait_ms: 50.0  # Emit immediate spike logs when DataLoader wait exceeds this threshold.
 
 wandb:
   enable: false

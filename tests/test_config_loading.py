@@ -349,3 +349,135 @@ def test_legacy_wandb_log_every_images_key_is_rejected(tmp_path: Path):
 
     with pytest.raises(ValueError, match="wandb.log_every_images"):
         load_training_config(config_file=str(cfg_path))
+
+
+def test_anchor_stream_batch_size_must_be_positive(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(
+        cfg_path,
+        {
+            "data": {
+                "slide_manifest_csv": "a.csv",
+                "slide_metadata_parquet": "index.parquet",
+                "anchor_catalog_manifest": "manifest.json",
+                "batch_size_per_gpu": 2,
+                "context_mpp": 1.0,
+                "target_mpp": 0.5,
+                "context_fov_um": 512.0,
+                "target_fov_um": 128.0,
+                "targets_per_context": 4,
+                "anchor_stream_batch_size": 0,
+            },
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10},
+            "meta": {"architecture": "vit_small", "patch_size": 16},
+            "optimization": {"total_images_budget": 1000},
+        },
+    )
+
+    with pytest.raises(ValueError, match="data.anchor_stream_batch_size must be > 0"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_performance_debug_logging_values_must_be_positive_when_enabled(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(
+        cfg_path,
+        {
+            "data": {
+                "slide_manifest_csv": "a.csv",
+                "slide_metadata_parquet": "index.parquet",
+                "anchor_catalog_manifest": "manifest.json",
+                "batch_size_per_gpu": 2,
+                "context_mpp": 1.0,
+                "target_mpp": 0.5,
+                "context_fov_um": 512.0,
+                "target_fov_um": 128.0,
+                "targets_per_context": 4,
+            },
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10},
+            "meta": {"architecture": "vit_small", "patch_size": 16},
+            "optimization": {"total_images_budget": 1000},
+            "logging": {
+                "performance_debug": {
+                    "enable": True,
+                    "log_every_images": 0,
+                    "slow_step_ms": 250.0,
+                    "slow_data_wait_ms": 50.0,
+                }
+            },
+        },
+    )
+
+    with pytest.raises(ValueError, match="logging.performance_debug.log_every_images must be > 0"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_legacy_step_log_every_iters_key_is_rejected(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(
+        cfg_path,
+        {
+            "data": {
+                "slide_manifest_csv": "a.csv",
+                "slide_metadata_parquet": "index.parquet",
+                "anchor_catalog_manifest": "manifest.json",
+                "batch_size_per_gpu": 2,
+                "context_mpp": 1.0,
+                "target_mpp": 0.5,
+                "context_fov_um": 512.0,
+                "target_fov_um": 128.0,
+                "targets_per_context": 4,
+            },
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10},
+            "meta": {"architecture": "vit_small", "patch_size": 16},
+            "optimization": {"total_images_budget": 1000},
+            "logging": {"step_log_every_iters": 10},
+        },
+    )
+
+    with pytest.raises(ValueError, match="logging.step_log_every_iters"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_step_log_every_images_rejects_invalid_type_and_range(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    base_cfg = {
+        "data": {
+            "slide_manifest_csv": "a.csv",
+            "slide_metadata_parquet": "index.parquet",
+            "anchor_catalog_manifest": "manifest.json",
+            "batch_size_per_gpu": 2,
+            "context_mpp": 1.0,
+            "target_mpp": 0.5,
+            "context_fov_um": 512.0,
+            "target_fov_um": 128.0,
+            "targets_per_context": 4,
+        },
+        "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10},
+        "meta": {"architecture": "vit_small", "patch_size": 16},
+        "optimization": {"total_images_budget": 1000},
+    }
+
+    bad_cfg = dict(base_cfg)
+    bad_cfg["logging"] = {"step_log_every_images": "10%"}
+    _write_yaml(cfg_path, bad_cfg)
+    with pytest.raises(ValueError, match="logging.step_log_every_images"):
+        load_training_config(config_file=str(cfg_path))
+
+    bad_cfg = dict(base_cfg)
+    bad_cfg["logging"] = {"step_log_every_images": True}
+    _write_yaml(cfg_path, bad_cfg)
+    with pytest.raises(ValueError, match="logging.step_log_every_images"):
+        load_training_config(config_file=str(cfg_path))
+
+    bad_cfg = dict(base_cfg)
+    bad_cfg["logging"] = {"step_log_every_images": -5}
+    _write_yaml(cfg_path, bad_cfg)
+    with pytest.raises(ValueError, match="logging.step_log_every_images"):
+        load_training_config(config_file=str(cfg_path))
+
+    bad_cfg = dict(base_cfg)
+    bad_cfg["logging"] = {"step_log_every_images": 1.1}
+    _write_yaml(cfg_path, bad_cfg)
+    with pytest.raises(ValueError, match="logging.step_log_every_images"):
+        load_training_config(config_file=str(cfg_path))

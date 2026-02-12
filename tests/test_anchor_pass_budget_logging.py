@@ -13,7 +13,7 @@ def test_anchor_pass_budget_computation():
     assert budget["anchor_passes_total"] == 2.5
     assert budget["coverage_first_pass"] == 1.0
     assert budget["mean_anchor_reuse"] == 1.5
-    assert budget["expected_eval_events"] == 6
+    assert budget["expected_tune_events"] == 6
 
 
 def test_anchor_pass_budget_partial_coverage():
@@ -27,4 +27,4 @@ def test_anchor_pass_budget_partial_coverage():
     assert budget["anchor_passes_total"] == 0.4
     assert budget["coverage_first_pass"] == 0.4
     assert budget["mean_anchor_reuse"] == 0.0
-    assert budget["expected_eval_events"] == 2
+    assert budget["expected_tune_events"] == 2

@@ -19,7 +19,7 @@ logger = logging.getLogger("ijepath")
 
 @dataclass
 class _TuneJob:
-    eval_index: int
+    tune_index: int
     images_seen: int
     snapshot_path: str
     enqueued_at_s: float
@@ -27,7 +27,7 @@ class _TuneJob:
 
 @dataclass
 class _TuneCompleted:
-    eval_index: int
+    tune_index: int
     images_seen: int
     enqueued_at_s: float
     started_at_s: float
@@ -39,7 +39,7 @@ class _TuneCompleted:
 
 
 class AsyncTuningRuntime:
-    """Rank-0 async tuning runtime that runs evaluator work on a dedicated device."""
+    """Rank-0 async tuning runtime that runs tuning work on a dedicated device."""
 
     def __init__(
         self,
@@ -82,12 +82,12 @@ class AsyncTuningRuntime:
         self._cv = threading.Condition(self._lock)
         self._stop_requested = False
         self._inflight = 0
-        self._dropped_evals = 0
+        self._dropped_tunes = 0
         self._startup_error: str | None = None
         self._worker = threading.Thread(target=self._worker_loop, name="ijepath-async-tuner", daemon=True)
         self._worker.start()
 
-    def submit(self, *, eval_index: int, images_seen: int, snapshot_path: str) -> dict[str, int]:
+    def submit(self, *, tune_index: int, images_seen: int, snapshot_path: str) -> dict[str, int]:
         with self._cv:
             self._raise_if_startup_failed_locked()
 
@@ -98,18 +98,18 @@ class AsyncTuningRuntime:
                         f"max_pending_jobs={self.max_pending_jobs} queue_depth={self.queue_depth_locked()}"
                     )
                 dropped = self._jobs.popleft()
-                self._dropped_evals += 1
+                self._dropped_tunes += 1
                 self._safe_unlink(dropped.snapshot_path)
                 logger.warning(
-                    "Dropping queued tuning eval due backlog (policy=%s): eval_index=%d images_seen=%d",
+                    "Dropping queued tuning job due backlog (policy=%s): tune_index=%d images_seen=%d",
                     self.coalesce_policy,
-                    int(dropped.eval_index),
+                    int(dropped.tune_index),
                     int(dropped.images_seen),
                 )
 
             self._jobs.append(
                 _TuneJob(
-                    eval_index=int(eval_index),
+                    tune_index=int(tune_index),
                     images_seen=int(images_seen),
                     snapshot_path=str(snapshot_path),
                     enqueued_at_s=float(time.time()),
@@ -118,7 +118,7 @@ class AsyncTuningRuntime:
             self._cv.notify_all()
             return {
                 "queue_depth": int(self.queue_depth_locked()),
-                "dropped_evals": int(self._dropped_evals),
+                "dropped_tunes": int(self._dropped_tunes),
             }
 
     def poll_completed(self) -> list[dict[str, Any]]:
@@ -129,7 +129,7 @@ class AsyncTuningRuntime:
                 item = self._completed.popleft()
                 out.append(
                     {
-                        "eval_index": int(item.eval_index),
+                        "tune_index": int(item.tune_index),
                         "images_seen": int(item.images_seen),
                         "enqueued_at_s": float(item.enqueued_at_s),
                         "started_at_s": float(item.started_at_s),
@@ -148,9 +148,9 @@ class AsyncTuningRuntime:
         with self._lock:
             return int(self.queue_depth_locked())
 
-    def dropped_evals(self) -> int:
+    def dropped_tunes(self) -> int:
         with self._lock:
-            return int(self._dropped_evals)
+            return int(self._dropped_tunes)
 
     def shutdown(self, *, wait: bool, timeout_s: float = 5.0) -> None:
         with self._cv:
@@ -218,7 +218,7 @@ class AsyncTuningRuntime:
                 teacher_backbone.eval()
                 result = tuner.tune(
                     teacher=teacher_backbone,
-                    eval_index=int(job.eval_index),
+                    tune_index=int(job.tune_index),
                     images_seen=int(job.images_seen),
                 )
             except Exception as exc:
@@ -231,7 +231,7 @@ class AsyncTuningRuntime:
                     self._register_snapshot(job.snapshot_path)
                     self._completed.append(
                         _TuneCompleted(
-                            eval_index=int(job.eval_index),
+                            tune_index=int(job.tune_index),
                             images_seen=int(job.images_seen),
                             enqueued_at_s=float(job.enqueued_at_s),
                             started_at_s=float(started_at_s),
