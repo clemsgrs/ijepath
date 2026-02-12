@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import shutil
 import traceback
 from pathlib import Path
 
@@ -38,6 +40,13 @@ class PathoROBPlugin(BenchmarkPlugin):
         self.metrics_dir = self.base_dir / "metrics"
         self.splits_dir.mkdir(parents=True, exist_ok=True)
         self.metrics_dir.mkdir(parents=True, exist_ok=True)
+        shared_cache_root_raw = str(self.cfg.get("shared_cache_root", "") or "").strip()
+        self.shared_split_cache_dir: Path | None = None
+        if shared_cache_root_raw:
+            self.shared_split_cache_dir = (
+                Path(shared_cache_root_raw).expanduser().resolve() / "pathorob" / "apd_splits"
+            )
+            self.shared_split_cache_dir.mkdir(parents=True, exist_ok=True)
 
         transform_cfg = dict(self.cfg.get("transforms", {}) or {})
         resize = int(transform_cfg.get("resize", 256))
@@ -182,6 +191,32 @@ class PathoROBPlugin(BenchmarkPlugin):
                 f"but config has {config_ood}."
             )
 
+    @staticmethod
+    def _fingerprint_manifest_csv(csv_path: str) -> str:
+        path = Path(csv_path).expanduser().resolve()
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _split_cache_key(*, dataset_name: str, split_params: dict, manifest_fingerprint: str) -> str:
+        payload = {
+            "dataset_name": str(dataset_name),
+            "split_params": dict(split_params),
+            "manifest_fingerprint": str(manifest_fingerprint),
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _load_split_frames(split_files: list[Path]) -> list[pd.DataFrame]:
+        return [pd.read_csv(path) for path in split_files]
+
     def _ensure_apd_splits(self, dataset_name: str, dataset_cfg: dict, manifest_df: pd.DataFrame) -> list[pd.DataFrame]:
         if dataset_name in self._apd_split_cache:
             return self._apd_split_cache[dataset_name]
@@ -194,19 +229,50 @@ class PathoROBPlugin(BenchmarkPlugin):
         split_files = sorted(split_dir.glob("rep_*/split_*.csv"))
 
         current_params = self._get_split_params(dataset_cfg)
+        manifest_csv = str(dataset_cfg.get("manifest_csv", ""))
+        manifest_fingerprint = self._fingerprint_manifest_csv(manifest_csv)
+        current_params_with_manifest = dict(current_params)
+        current_params_with_manifest["manifest_fingerprint"] = str(manifest_fingerprint)
         need_regen = True
 
         if split_files and metadata_file.exists():
             try:
                 saved = json.loads(metadata_file.read_text(encoding="utf-8"))
-                if saved == current_params:
+                if saved == current_params_with_manifest:
                     need_regen = False
                     logger.info("[APD] Loading cached splits for %s", dataset_name)
             except Exception:
                 need_regen = True
 
+        cache_dataset_dir: Path | None = None
+        if self.shared_split_cache_dir is not None:
+            cache_key = self._split_cache_key(
+                dataset_name=dataset_name,
+                split_params=current_params,
+                manifest_fingerprint=manifest_fingerprint,
+            )
+            cache_dataset_dir = self.shared_split_cache_dir / cache_key / str(dataset_name)
+            cache_metadata_file = self.shared_split_cache_dir / cache_key / "split_params.json"
+            cache_split_files = sorted(cache_dataset_dir.glob("rep_*/split_*.csv"))
+            if need_regen and cache_split_files and cache_metadata_file.exists():
+                try:
+                    saved_cache_params = json.loads(cache_metadata_file.read_text(encoding="utf-8"))
+                    if saved_cache_params == current_params_with_manifest:
+                        split_dir.mkdir(parents=True, exist_ok=True)
+                        shutil.copytree(cache_dataset_dir, split_dir, dirs_exist_ok=True)
+                        metadata_file.write_text(
+                            json.dumps(current_params_with_manifest, indent=2),
+                            encoding="utf-8",
+                        )
+                        split_files = sorted(split_dir.glob("rep_*/split_*.csv"))
+                        if split_files:
+                            need_regen = False
+                            logger.info("[APD] Reused shared split cache for %s (key=%s)", dataset_name, cache_key)
+                except Exception:
+                    need_regen = True
+
         if not need_regen:
-            splits = [pd.read_csv(p) for p in split_files]
+            splits = self._load_split_frames(split_files)
         else:
             splits = generate_apd_splits(
                 df=manifest_df,
@@ -221,7 +287,15 @@ class PathoROBPlugin(BenchmarkPlugin):
                 mode=str(apd_cfg.get("mode", "paper")),
             )
             split_dir.mkdir(parents=True, exist_ok=True)
-            metadata_file.write_text(json.dumps(current_params, indent=2), encoding="utf-8")
+            metadata_file.write_text(json.dumps(current_params_with_manifest, indent=2), encoding="utf-8")
+            if cache_dataset_dir is not None:
+                cache_key_dir = cache_dataset_dir.parent
+                cache_key_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(split_dir, cache_dataset_dir, dirs_exist_ok=True)
+                (cache_key_dir / "split_params.json").write_text(
+                    json.dumps(current_params_with_manifest, indent=2),
+                    encoding="utf-8",
+                )
 
         self._apd_split_cache[dataset_name] = splits
         return splits

@@ -51,6 +51,8 @@ class Tuner:
                 continue
             ptype = str(p.get("type", "")).strip().lower()
             if ptype == "pathorob":
+                if p.get("shared_cache_root") in (None, ""):
+                    p["shared_cache_root"] = self.cfg.get("shared_cache_root", None)
                 plugin = PathoROBPlugin(p, self.device, output_dir=self.output_dir)
                 self.plugins.append(plugin)
             else:

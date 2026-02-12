@@ -48,6 +48,10 @@ def initialize_wandb(
     resume_id = wandb_cfg.get("resume_id")
     if resume_id:
         init_kwargs.update({"id": resume_id, "resume": "must"})
+    else:
+        run_id = wandb_cfg.get("run_id")
+        if run_id:
+            init_kwargs.update({"id": run_id})
 
     run = wb.init(**init_kwargs)
     run.define_metric("images_seen", summary="max")

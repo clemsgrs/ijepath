@@ -351,6 +351,94 @@ def test_legacy_wandb_log_every_images_key_is_rejected(tmp_path: Path):
         load_training_config(config_file=str(cfg_path))
 
 
+def test_legacy_logging_folder_key_is_rejected(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(
+        cfg_path,
+        {
+            "data": {
+                "slide_manifest_csv": "a.csv",
+                "slide_metadata_parquet": "index.parquet",
+                "anchor_catalog_manifest": "manifest.json",
+                "batch_size_per_gpu": 2,
+                "context_mpp": 1.0,
+                "target_mpp": 0.5,
+                "context_fov_um": 512.0,
+                "target_fov_um": 128.0,
+                "targets_per_context": 4,
+            },
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10},
+            "meta": {"architecture": "vit_small", "patch_size": 16},
+            "optimization": {"total_images_budget": 1000},
+            "logging": {"folder": "outputs/legacy"},
+        },
+    )
+
+    with pytest.raises(ValueError, match="logging.folder"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_output_root_and_cache_root_are_accepted(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(
+        cfg_path,
+        {
+            "data": {
+                "slide_manifest_csv": "a.csv",
+                "slide_metadata_parquet": "index.parquet",
+                "anchor_catalog_manifest": "manifest.json",
+                "batch_size_per_gpu": 2,
+                "context_mpp": 1.0,
+                "target_mpp": 0.5,
+                "context_fov_um": 512.0,
+                "target_fov_um": 128.0,
+                "targets_per_context": 4,
+            },
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10},
+            "meta": {"architecture": "vit_small", "patch_size": 16},
+            "optimization": {"total_images_budget": 1000},
+            "output": {
+                "root": str(tmp_path / "outputs"),
+                "shared_cache_root": str(tmp_path / "cache"),
+            },
+        },
+    )
+
+    loaded = load_training_config(config_file=str(cfg_path))
+    assert loaded["output"]["root"] == str(tmp_path / "outputs")
+    assert loaded["output"]["shared_cache_root"] == str(tmp_path / "cache")
+
+
+def test_output_run_root_key_is_rejected(tmp_path: Path):
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(
+        cfg_path,
+        {
+            "data": {
+                "slide_manifest_csv": "a.csv",
+                "slide_metadata_parquet": "index.parquet",
+                "anchor_catalog_manifest": "manifest.json",
+                "batch_size_per_gpu": 2,
+                "context_mpp": 1.0,
+                "target_mpp": 0.5,
+                "context_fov_um": 512.0,
+                "target_fov_um": 128.0,
+                "targets_per_context": 4,
+            },
+            "mask": {"num_pred_masks": 4, "num_enc_masks": 1, "min_keep": 10},
+            "meta": {"architecture": "vit_small", "patch_size": 16},
+            "optimization": {"total_images_budget": 1000},
+            "output": {
+                "root": str(tmp_path / "outputs"),
+                "run_root": str(tmp_path / "custom-runs"),
+            },
+        },
+    )
+
+    with pytest.raises(ValueError, match="output.run_root"):
+        load_training_config(config_file=str(cfg_path))
+
+
 def test_anchor_stream_batch_size_must_be_positive(tmp_path: Path):
     cfg_path = tmp_path / "cfg.yaml"
     _write_yaml(

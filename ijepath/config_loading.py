@@ -182,10 +182,22 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         raise ValueError("Unsupported config value: logging.checkpoint_every_images")
     if "step_log_every_iters" in cfg.get("logging", {}):
         raise ValueError("Unsupported config value: logging.step_log_every_iters")
+    if "folder" in cfg.get("logging", {}):
+        raise ValueError("Unsupported config value: logging.folder (use output.root)")
     if "log_every_images" in cfg.get("wandb", {}):
         raise ValueError("Unsupported config value: wandb.log_every_images")
     if "schedule" in cfg.get("tuning", {}):
         raise ValueError("Unsupported config value: tuning.schedule")
+
+    output_cfg = dict(cfg.get("output", {}) or {})
+    output_root = output_cfg.get("root", "outputs")
+    if output_root is None or not str(output_root).strip():
+        raise ValueError("output.root must be a non-empty path")
+    if "run_root" in output_cfg:
+        raise ValueError("Unsupported config value: output.run_root (run path is fixed to <output.root>/runs/<run_id>)")
+    shared_cache_root = output_cfg.get("shared_cache_root", f"{str(output_root).strip()}/cache")
+    if shared_cache_root is None or not str(shared_cache_root).strip():
+        raise ValueError("output.shared_cache_root must be a non-empty path")
 
     required_paths = (
         ("data", "slide_manifest_csv"),

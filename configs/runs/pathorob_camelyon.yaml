@@ -97,8 +97,11 @@ training:
   log_every: 10000
   save_every: 10000
 
+output:
+  root: outputs
+  shared_cache_root: ${output.root}/cache
+
 logging:
-  folder: outputs/${wandb.exp_name}
   write_tag: jepa-pathorob
   step_log_every_images: 0  # int images or float fraction in [0,1] (e.g. 10000 or 0.1); 0 disables cadence logs; "10%" is invalid.
   performance_debug:

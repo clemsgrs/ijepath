@@ -98,7 +98,6 @@ def test_end_to_end_fixture_smoke(tmp_path: Path):
     assert int(manifest["total_anchors"]) > 0
     assert str(manifest["profile"]["profile_id"]) == "ctx1p0_tgt0p5_fov512um_k4"
 
-    train_out_dir = outputs_dir / "test-fixture-smoke"
     write_tag = "test-fixture-smoke"
     _run(
         [
@@ -113,11 +112,16 @@ def test_end_to_end_fixture_smoke(tmp_path: Path):
             f"data.anchor_catalog_manifest={anchor_catalog_manifest}",
             "data.num_workers=0",
             "data.batch_size_per_gpu=2",
-            f"logging.folder={train_out_dir}",
+            f"output.root={outputs_dir}",
             f"logging.write_tag={write_tag}",
         ],
         env=env,
     )
+
+    run_root = outputs_dir / "runs"
+    run_dirs = sorted(p for p in run_root.iterdir() if p.is_dir())
+    assert len(run_dirs) == 1, f"expected exactly one run directory under {run_root}, got {run_dirs}"
+    train_out_dir = run_dirs[0]
 
     params_path = train_out_dir / "params-ijepa.yaml"
     log_path = train_out_dir / f"{write_tag}_r0.csv"

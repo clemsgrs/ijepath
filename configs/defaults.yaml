@@ -98,8 +98,11 @@ tuning:
     save_best_checkpoint: true
     best_checkpoint_name: best-robustness.pth.tar
 
+output:
+  root: outputs  # Base output root; run artifacts default to <root>/runs/<run_id>.
+  shared_cache_root: ${output.root}/cache  # Reusable cross-run cache (e.g., PathoROB APD split cache).
+
 logging:
-  folder: outputs/train
   write_tag: jepa
   step_log_every_images: 0  # int images or float fraction in [0,1] (e.g. 10000 or 0.1); 0 disables cadence logs; "10%" is invalid.
   performance_debug:
