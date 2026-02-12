@@ -247,6 +247,56 @@ def test_build_pass_train_results_uses_standardized_throughput_and_explicit_mask
     assert "target_predict_tokens" not in payload
 
 
+def test_log_pass_loss_metrics_to_wandb_emits_single_images_seen_payload(monkeypatch):
+    from ijepath.train_cross_resolution_jepa import log_pass_loss_metrics_to_wandb
+
+    update_calls = []
+    log_calls = []
+
+    def _fake_update_log_dict(prefix, results, log_dict, step="step"):
+        update_calls.append((prefix, dict(results), dict(log_dict), step))
+        for result_key, value in results.items():
+            log_dict[f"{prefix}/{result_key}"] = value
+
+    def _fake_log_images_seen_dict(log_dict, images_seen):
+        log_calls.append((dict(log_dict), int(images_seen)))
+
+    monkeypatch.setattr("ijepath.train_cross_resolution_jepa.update_log_dict", _fake_update_log_dict)
+    monkeypatch.setattr(
+        "ijepath.train_cross_resolution_jepa.log_images_seen_dict",
+        _fake_log_images_seen_dict,
+    )
+
+    payload = log_pass_loss_metrics_to_wandb(
+        images_seen=6400,
+        pass_index=2,
+        loss_avg=0.1234,
+        loss_min=0.101,
+        loss_max=0.165,
+    )
+
+    assert len(update_calls) == 1
+    prefix, results, base_log_dict, step_metric = update_calls[0]
+    assert prefix == "train"
+    assert step_metric == "images_seen"
+    assert base_log_dict == {"pass_index": 2, "images_seen": 6400}
+    assert results == {
+        "loss_pass_avg": 0.1234,
+        "loss_pass_min": 0.101,
+        "loss_pass_max": 0.165,
+    }
+
+    assert len(log_calls) == 1
+    logged_payload, logged_step = log_calls[0]
+    assert logged_step == 6400
+    assert logged_payload["pass_index"] == 2
+    assert logged_payload["images_seen"] == 6400
+    assert logged_payload["train/loss_pass_avg"] == 0.1234
+    assert logged_payload["train/loss_pass_min"] == 0.101
+    assert logged_payload["train/loss_pass_max"] == 0.165
+    assert payload == logged_payload
+
+
 def test_train_step_csv_schema_is_standardized():
     from ijepath.train_cross_resolution_jepa import get_train_step_csv_columns
 
