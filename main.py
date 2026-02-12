@@ -127,7 +127,7 @@ def orchestrate_pipeline_artifacts(
         "slide_manifest_csv": str(Path(manifest_csv).resolve()),
         "slide_metadata_parquet": str(slide_metadata_parquet),
         "anchor_catalog_manifest": str(anchor_catalog_manifest),
-        "training_output_folder": str(output_root),
+        "output_root": str(output_root),
     }
 
 
@@ -440,8 +440,8 @@ if __name__ == '__main__':
                 f"data.anchor_catalog_manifest={artifacts['anchor_catalog_manifest']}",
             ]
         )
-        if not _has_opt(effective_opts, "logging.folder="):
-            effective_opts.append(f"logging.folder={artifacts['training_output_folder']}")
+        if not _has_opt(effective_opts, "output.root="):
+            effective_opts.append(f"output.root={artifacts['output_root']}")
 
     visible_devices = _discover_visible_devices()
     reserved_tuning_device = _resolve_reserved_tuning_device_token(

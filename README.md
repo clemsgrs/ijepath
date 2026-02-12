@@ -96,7 +96,8 @@ CUDA_VISIBLE_DEVICES=0,1 python main.py \
 # defaults config is implicit: configs/defaults.yaml
 
 # Merged resolved config is saved automatically to:
-# outputs/<run-folder>/params-ijepa.yaml
+# outputs/runs/<run_id>/params-ijepa.yaml   (default)
+# run_id policy: wandb.resume_id (if set) -> wandb id (if wandb enabled) -> UTC launch timestamp
 
 # Image-budget semantics:
 # - optimization.total_images_budget controls total training length

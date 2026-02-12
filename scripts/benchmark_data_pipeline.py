@@ -144,7 +144,7 @@ def benchmark_train(args: argparse.Namespace, repo_root: Path) -> None:
         f"data.batch_size_per_gpu={args.batch_size}",
         f"data.num_workers={args.num_workers}",
         "optimization.total_images_budget=256",
-        "logging.folder=/tmp/ijepath-benchmark-train",
+        "output.root=/tmp/ijepath-benchmark-train",
         "logging.write_tag=benchmark",
     ]
     elapsed, rss = run_cmd(cmd, cwd=repo_root)

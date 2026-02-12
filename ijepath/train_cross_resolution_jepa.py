@@ -28,6 +28,7 @@ from ijepath.log.tracker import (
     save_run_config_to_wandb,
     update_log_dict,
 )
+from ijepath.output_runtime import choose_run_id, resolve_output_paths
 from ijepath.utils.distributed import AllReduce, init_distributed
 from ijepath.utils.logging import AverageMeter, CSVLogger, gpu_timer, grad_logger
 from ijepath.utils.log_utils import setup_logging
@@ -643,7 +644,6 @@ def main(
     total_images_budget = resolve_total_images_budget(args["optimization"])
 
     # -- LOGGING
-    folder = args["logging"]["folder"]
     tag = args["logging"]["write_tag"]
     step_log_every_images_raw = args["logging"].get(
         "step_log_every_images",
@@ -667,8 +667,6 @@ def main(
     perf_debug_slow_step_ms = float(perf_debug_cfg["slow_step_ms"])
     perf_debug_slow_data_wait_ms = float(perf_debug_cfg["slow_data_wait_ms"])
 
-    os.makedirs(folder, exist_ok=True)
-
     try:
         mp.set_start_method("spawn")
     except Exception:
@@ -678,6 +676,32 @@ def main(
         world_size, rank = init_distributed()
     else:
         world_size, rank = int(distributed_state[0]), int(distributed_state[1])
+
+    wandb_cfg = dict(args.get("wandb", {}) or {})
+    if rank == 0:
+        run_id = choose_run_id(args)
+    else:
+        run_id = ""
+    if world_size > 1 and dist.is_available() and dist.is_initialized():
+        run_id_list = [str(run_id)]
+        dist.broadcast_object_list(run_id_list, src=0)
+        run_id = str(run_id_list[0])
+
+    resolved_output_paths = resolve_output_paths(args, run_id=str(run_id))
+    folder = str(resolved_output_paths["run_dir"])
+    shared_cache_root = str(resolved_output_paths["shared_cache_root"])
+    os.makedirs(folder, exist_ok=True)
+
+    args.setdefault("output", {})
+    args["output"]["resolved_run_id"] = str(run_id)
+    args["output"]["resolved_run_dir"] = str(folder)
+    args["output"]["resolved_shared_cache_root"] = str(shared_cache_root)
+    args.setdefault("tuning", {})
+    args["tuning"]["shared_cache_root"] = str(shared_cache_root)
+    if bool(wandb_cfg.get("enable", False)) and not str(wandb_cfg.get("resume_id") or "").strip():
+        args.setdefault("wandb", {})
+        args["wandb"]["run_id"] = str(run_id)
+
     logger_level = logging.INFO if rank == 0 else logging.ERROR
     setup_logging(output=folder, level=logger_level)
 
@@ -704,7 +728,6 @@ def main(
     args.setdefault("optimization", {})
     args["optimization"]["total_steps"] = total_steps
 
-    wandb_cfg = dict(args.get("wandb", {}) or {})
     wandb_enabled = rank == 0 and bool(wandb_cfg.get("enable", False))
 
     if rank == 0:

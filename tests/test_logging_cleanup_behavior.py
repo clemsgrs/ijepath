@@ -575,8 +575,8 @@ def test_launch_worker_processes_cleans_up_on_keyboard_interrupt(monkeypatch):
 
 
 def test_has_opt_detects_dotlist_prefix():
-    assert main_entry._has_opt(["a=1", "logging.folder=/tmp/out"], "logging.folder=") is True
-    assert main_entry._has_opt(["a=1"], "logging.folder=") is False
+    assert main_entry._has_opt(["a=1", "output.root=/tmp/out"], "output.root=") is True
+    assert main_entry._has_opt(["a=1"], "output.root=") is False
 
 
 def test_orchestrate_pipeline_artifacts_runs_both_build_stages(monkeypatch, tmp_path: Path):
@@ -604,7 +604,7 @@ def test_orchestrate_pipeline_artifacts_runs_both_build_stages(monkeypatch, tmp_
     assert calls[1][1].endswith("scripts/build_valid_context_anchor_catalog.py")
     assert out["slide_metadata_parquet"].endswith("indexes/slide_metadata.parquet")
     assert out["anchor_catalog_manifest"].endswith("indexes/anchor_catalog_manifest.json")
-    assert out["training_output_folder"].endswith("/out")
+    assert out["output_root"].endswith("/out")
 
 
 def test_run_checked_raises_with_command_output_on_failure(monkeypatch):

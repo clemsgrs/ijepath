@@ -10,7 +10,8 @@ from ijepath.config_logging import log_and_write_config
 def test_log_and_write_config_emits_yaml_and_persists_file(tmp_path: Path):
     cfg = {
         "data": {"batch_size_per_gpu": 2},
-        "logging": {"folder": str(tmp_path), "write_tag": "unit-test"},
+        "output": {"root": str(tmp_path), "shared_cache_root": str(tmp_path / "cache")},
+        "logging": {"write_tag": "unit-test"},
         "_config_sources": {"mode": "layered"},
     }
 
@@ -32,4 +33,3 @@ def test_log_and_write_config_emits_yaml_and_persists_file(tmp_path: Path):
     logged = stream.getvalue()
     assert "batch_size_per_gpu: 2" in logged
     assert "_config_sources:" in logged
-
