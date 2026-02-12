@@ -29,7 +29,15 @@ def load_checkpoint(
 ):
     try:
         checkpoint = torch.load(r_path, map_location=torch.device('cpu'))
-        pass_index = int(checkpoint.get('pass_index', checkpoint.get('epoch', 0)))
+        if checkpoint.get('pass_index') is not None:
+            pass_index = int(checkpoint.get('pass_index', 0))
+        else:
+            pass_index = 0
+            if checkpoint.get('epoch') is not None:
+                logger.warning(
+                    "Ignoring legacy 'epoch' checkpoint field during resume; using pass_index=%d.",
+                    int(pass_index),
+                )
 
         # -- loading encoder
         pretrained_dict = checkpoint['encoder']

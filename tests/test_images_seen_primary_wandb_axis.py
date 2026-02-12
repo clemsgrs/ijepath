@@ -55,7 +55,7 @@ def test_tune_metrics_can_bind_to_images_seen_axis(monkeypatch):
     log_payload = {"images_seen": 5000}
     update_log_dict(
         "tune",
-        {"ri": 0.42, "eval_index": 7},
+        {"ri": 0.42, "tune_index": 7},
         log_payload,
         step="images_seen",
     )
@@ -63,7 +63,7 @@ def test_tune_metrics_can_bind_to_images_seen_axis(monkeypatch):
 
     assert any(args[0] == "tune/ri" and kwargs.get("step_metric") == "images_seen" for args, kwargs in defined)
     assert any(
-        args[0] == "tune/eval_index" and kwargs.get("step_metric") == "images_seen"
+        args[0] == "tune/tune_index" and kwargs.get("step_metric") == "images_seen"
         for args, kwargs in defined
     )
     payload, step = calls[0]

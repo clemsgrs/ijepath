@@ -63,6 +63,7 @@ class CrossResolutionWSIDataset(IterableDataset):
         sampling_stratum_key: str = "organ",
         sampling_stratum_weights: str | dict = "inverse_frequency",
         max_open_slides_per_worker: int = 16,
+        anchor_stream_batch_size: int = 2048,
     ) -> None:
         super().__init__()
         self.anchor_catalog_manifest = str(anchor_catalog_manifest)
@@ -90,6 +91,7 @@ class CrossResolutionWSIDataset(IterableDataset):
         self.sampling_stratum_key = str(sampling_stratum_key)
         self.sampling_stratum_weights = sampling_stratum_weights
         self.max_open_slides_per_worker = max(1, int(max_open_slides_per_worker))
+        self.anchor_stream_batch_size = max(1, int(anchor_stream_batch_size))
 
         valid_policies = {"skip_anchor", "lower_threshold"}
         if self.insufficient_target_policy not in valid_policies:
@@ -136,6 +138,17 @@ class CrossResolutionWSIDataset(IterableDataset):
         self.current_pass_index = 0
         self._reader_cache: OrderedDict[str, WholeSlideDataReaderAdapter] = OrderedDict()
         self._resolution_plan_cache: Dict[str, dict] = {}
+        self._reader_cache_hits = 0
+        self._reader_cache_misses = 0
+        self._reader_cache_evictions = 0
+        self._last_reader_cache_event: dict[str, int | str] = {
+            "event": "none",
+            "open_slides": 0,
+            "evicted": 0,
+            "hits_total": 0,
+            "misses_total": 0,
+            "evictions_total": 0,
+        }
 
     def __len__(self) -> int:
         return max(1, int(math.ceil(float(self.total_anchors) / float(max(1, self.world_size)))))
@@ -159,20 +172,41 @@ class CrossResolutionWSIDataset(IterableDataset):
         slide_id = str(row["slide_id"])
         cached = self._reader_cache.pop(slide_id, None)
         if cached is not None:
+            self._reader_cache_hits += 1
             self._reader_cache[slide_id] = cached
+            self._last_reader_cache_event = {
+                "event": "hit",
+                "open_slides": int(len(self._reader_cache)),
+                "evicted": 0,
+                "hits_total": int(self._reader_cache_hits),
+                "misses_total": int(self._reader_cache_misses),
+                "evictions_total": int(self._reader_cache_evictions),
+            }
             return cached
 
+        self._reader_cache_misses += 1
         adapter = WholeSlideDataReaderAdapter(
             wsi_path=str(row["wsi_path"]),
             mask_path=row.get("mask_path"),
             backend=self.backend,
         )
         self._reader_cache[slide_id] = adapter
+        evicted_count = 0
         while len(self._reader_cache) > int(self.max_open_slides_per_worker):
             _, evicted = self._reader_cache.popitem(last=False)
             close_fn = getattr(evicted, "close", None)
             if callable(close_fn):
                 close_fn()
+            evicted_count += 1
+        self._reader_cache_evictions += int(evicted_count)
+        self._last_reader_cache_event = {
+            "event": "miss",
+            "open_slides": int(len(self._reader_cache)),
+            "evicted": int(evicted_count),
+            "hits_total": int(self._reader_cache_hits),
+            "misses_total": int(self._reader_cache_misses),
+            "evictions_total": int(self._reader_cache_evictions),
+        }
         return adapter
 
     def _to_rgb(self, image: np.ndarray) -> np.ndarray:
@@ -436,6 +470,7 @@ class CrossResolutionWSIDataset(IterableDataset):
             else float(min_target_tissue_fraction)
         )
         reader = self._get_reader(anchor)
+        reader_cache_event = dict(self._last_reader_cache_event)
         slide_id = str(anchor["slide_id"])
         resolution_plan = self._get_resolution_plan(
             slide_id=slide_id,
@@ -563,6 +598,18 @@ class CrossResolutionWSIDataset(IterableDataset):
                 "configured_min_target_tissue_fraction": self.min_target_tissue_fraction,
                 "align_targets_to_patch_grid": self.align_targets_to_patch_grid,
                 "stratum_id": str(anchor.get("stratum_id", "unknown")),
+                "anchor_stream_batch_id": int(anchor.get("_anchor_stream_batch_id", -1)),
+                "anchor_stream_row_in_batch": int(anchor.get("_anchor_stream_row_in_batch", -1)),
+                "anchor_stream_batch_size": int(anchor.get("_anchor_stream_batch_size", -1)),
+                "anchor_stream_shard_path": str(anchor.get("_anchor_stream_shard_path", "")),
+                "reader_cache_event": str(reader_cache_event.get("event", "none")),
+                "reader_cache_hit": 1 if str(reader_cache_event.get("event", "none")) == "hit" else 0,
+                "reader_cache_miss": 1 if str(reader_cache_event.get("event", "none")) == "miss" else 0,
+                "reader_cache_evictions_on_event": int(reader_cache_event.get("evicted", 0)),
+                "reader_cache_open_slides": int(reader_cache_event.get("open_slides", 0)),
+                "reader_cache_hits_total": int(reader_cache_event.get("hits_total", 0)),
+                "reader_cache_misses_total": int(reader_cache_event.get("misses_total", 0)),
+                "reader_cache_evictions_total": int(reader_cache_event.get("evictions_total", 0)),
             },
         }
 
@@ -666,7 +713,8 @@ class CrossResolutionWSIDataset(IterableDataset):
             for idx in order:
                 shard = eligible_shards[idx]
                 parquet_file = pq.ParquetFile(str(shard["path"]))
-                for batch in parquet_file.iter_batches(batch_size=2048):
+                batch_id = 0
+                for batch in parquet_file.iter_batches(batch_size=int(self.anchor_stream_batch_size)):
                     columns = batch.to_pydict()
                     if not columns:
                         continue
@@ -674,6 +722,10 @@ class CrossResolutionWSIDataset(IterableDataset):
                     row_count = len(first_col)
                     for row_idx in range(row_count):
                         row = {k: columns[k][row_idx] for k in columns.keys()}
+                        row["_anchor_stream_batch_id"] = int(batch_id)
+                        row["_anchor_stream_row_in_batch"] = int(row_idx)
+                        row["_anchor_stream_batch_size"] = int(row_count)
+                        row["_anchor_stream_shard_path"] = str(shard["path"])
                         anchor_id = str(row.get("anchor_id", ""))
                         if not anchor_id:
                             continue
@@ -683,6 +735,7 @@ class CrossResolutionWSIDataset(IterableDataset):
                             continue
                         produced += 1
                         yield row
+                    batch_id += 1
 
             if produced == 0:
                 return

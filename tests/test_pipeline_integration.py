@@ -130,6 +130,7 @@ def test_end_to_end_fixture_smoke(tmp_path: Path):
         train_rows = list(csv.DictReader(f))
     assert len(train_rows) > 0
     expected_columns = {
+        "images_seen",
         "pass_index",
         "iteration",
         "loss",

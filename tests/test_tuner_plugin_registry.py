@@ -71,10 +71,10 @@ def test_selected_plugin_must_emit_selection_metric_value(tmp_path: Path):
     class _DummyPlugin:
         name = "pathorob"
 
-        def should_run(self, images_seen: int, eval_index: int) -> bool:
+        def should_run(self, images_seen: int, tune_index: int) -> bool:
             return True
 
-        def run(self, teacher, eval_index: int, images_seen: int):
+        def run(self, teacher, tune_index: int, images_seen: int):
             return PluginResult(
                 name="pathorob",
                 payload={},
@@ -85,7 +85,7 @@ def test_selected_plugin_must_emit_selection_metric_value(tmp_path: Path):
 
     tuner.plugins = [_DummyPlugin()]
     with pytest.raises(ValueError, match="Configured early-stopping target was not emitted"):
-        tuner.tune(teacher=object(), eval_index=0, images_seen=0)
+        tuner.tune(teacher=object(), tune_index=0, images_seen=0)
 
 
 def test_pathorob_transform_can_disable_center_crop(tmp_path: Path):

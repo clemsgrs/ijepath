@@ -22,9 +22,9 @@ class BenchmarkPlugin(ABC):
     def bind_runtime(self, tuning_output_dir: Path | None) -> None:
         self.tuning_output_dir = tuning_output_dir
 
-    def should_run(self, images_seen: int, eval_index: int) -> bool:
+    def should_run(self, images_seen: int, tune_index: int) -> bool:
         return True
 
     @abstractmethod
-    def run(self, teacher: Any, eval_index: int, images_seen: int) -> PluginResult:
+    def run(self, teacher: Any, tune_index: int, images_seen: int) -> PluginResult:
         raise NotImplementedError

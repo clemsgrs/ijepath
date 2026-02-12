@@ -76,7 +76,7 @@ class Tuner:
         }
 
     @torch.no_grad()
-    def tune(self, teacher, eval_index: int, images_seen: int) -> dict:
+    def tune(self, teacher, tune_index: int, images_seen: int) -> dict:
         out = {
             "plugins": {},
             "log_metrics": {},
@@ -84,10 +84,10 @@ class Tuner:
         }
 
         for plugin in self.plugins:
-            if not plugin.should_run(images_seen=int(images_seen), eval_index=int(eval_index)):
+            if not plugin.should_run(images_seen=int(images_seen), tune_index=int(tune_index)):
                 continue
 
-            result = plugin.run(teacher=teacher, eval_index=int(eval_index), images_seen=int(images_seen))
+            result = plugin.run(teacher=teacher, tune_index=int(tune_index), images_seen=int(images_seen))
             out["plugins"][plugin.name] = result.payload
 
             for key, value in result.log_metrics.items():
@@ -97,7 +97,7 @@ class Tuner:
             value = out["log_metrics"].get(self.selection_cfg["log_key"])
             if value is None:
                 raise ValueError(
-                    "Configured early-stopping target was not emitted in this evaluation event: "
+                    "Configured early-stopping target was not emitted in this tuning event: "
                     f"{self.selection_cfg['log_key']}. Available metrics: {sorted(out['log_metrics'].keys())}"
                 )
             out["selection"] = {
@@ -110,7 +110,7 @@ class Tuner:
 
         self._persist_unified_metrics(
             results=out,
-            eval_index=int(eval_index),
+            tune_index=int(tune_index),
             images_seen=int(images_seen),
         )
         return out
@@ -126,7 +126,7 @@ class Tuner:
             return None
         return str(self.selection_cfg["mode"])
 
-    def _persist_unified_metrics(self, results: dict, eval_index: int, images_seen: int) -> None:
+    def _persist_unified_metrics(self, results: dict, tune_index: int, images_seen: int) -> None:
         rows = []
         plugin_payloads = dict(results.get("plugins", {}))
         for plugin_name, payload in plugin_payloads.items():
@@ -134,7 +134,7 @@ class Tuner:
                 for row in payload["rows"]:
                     row = dict(row)
                     row.setdefault("plugin", plugin_name)
-                    row.setdefault("eval_index", int(eval_index))
+                    row.setdefault("tune_index", int(tune_index))
                     row.setdefault("images_seen", int(images_seen))
                     rows.append(row)
 
@@ -142,7 +142,7 @@ class Tuner:
             return
 
         df = pd.DataFrame(rows)
-        out_csv = self.metrics_dir / f"eval_{int(eval_index):04d}.csv"
+        out_csv = self.metrics_dir / f"tune_{int(tune_index):04d}.csv"
         df.to_csv(out_csv, index=False)
 
         roll_jsonl = self.metrics_dir / "all_metrics.jsonl"
@@ -152,8 +152,8 @@ class Tuner:
                 handle.write("\n")
 
         logger.info(
-            "Persisted unified tuning metrics: rows=%d eval_index=%d images_seen=%d",
+            "Persisted unified tuning metrics: rows=%d tune_index=%d images_seen=%d",
             len(df),
-            int(eval_index),
+            int(tune_index),
             int(images_seen),
         )

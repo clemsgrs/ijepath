@@ -25,7 +25,7 @@ logger = logging.getLogger("ijepath")
 
 
 class PathoROBPlugin(BenchmarkPlugin):
-    """PathoROB robustness evaluation plugin (teacher-only)."""
+    """PathoROB robustness tuning plugin (teacher-only)."""
 
     def __init__(self, cfg: dict, device: torch.device, output_dir: Path):
         self.cfg = dict(cfg or {})
@@ -72,7 +72,7 @@ class PathoROBPlugin(BenchmarkPlugin):
         self._apd_split_cache: dict[str, list[pd.DataFrame]] = {}
         self._dataset_cache: dict[str, dict[str, object]] = {}
 
-    def should_run(self, images_seen: int, eval_index: int) -> bool:
+    def should_run(self, images_seen: int, tune_index: int) -> bool:
         tune_every_images = self.cfg.get("tune_every_images", None)
         if tune_every_images in (None, 0):
             return True
@@ -135,7 +135,7 @@ class PathoROBPlugin(BenchmarkPlugin):
     def _metric_enabled(
         metric_cfg: dict,
         *,
-        eval_index: int,
+        tune_index: int,
         default_every_n: int,
     ) -> bool:
         if not bool(metric_cfg.get("enable", True)):
@@ -143,7 +143,7 @@ class PathoROBPlugin(BenchmarkPlugin):
         every_n = int(metric_cfg.get("every_n_evals", default_every_n))
         if every_n <= 0:
             return False
-        return int(eval_index) % int(every_n) == 0
+        return int(tune_index) % int(every_n) == 0
 
     def _get_split_params(self, dataset_cfg: dict) -> dict:
         apd_cfg = dict(self.cfg.get("apd", {}) or {})
@@ -231,7 +231,7 @@ class PathoROBPlugin(BenchmarkPlugin):
         dataset_name: str,
         dataset_cfg: dict,
         teacher_backbone,
-        eval_index: int,
+        tune_index: int,
         images_seen: int,
     ) -> tuple[list[dict], dict[str, float]]:
         manifest_df = self._load_manifest(dataset_name, str(dataset_cfg["manifest_csv"]))
@@ -246,21 +246,21 @@ class PathoROBPlugin(BenchmarkPlugin):
         apd_cfg = dict(self.cfg.get("apd", {}) or {})
         cl_cfg = dict(self.cfg.get("clustering", {}) or {})
 
-        if self._metric_enabled(ri_cfg, eval_index=int(eval_index), default_every_n=1):
+        if self._metric_enabled(ri_cfg, tune_index=int(tune_index), default_every_n=1):
             ri = compute_ri(
                 dataset_name=dataset_name,
                 features=features,
                 manifest_df=manifest_df,
                 k_candidates=list(ri_cfg.get("k_candidates", [3, 5, 7, 10, 15])),
                 max_pairs=(None if int(self.cfg.get("max_pairs", 0)) <= 0 else int(self.cfg.get("max_pairs", 0))),
-                random_state=int(self.cfg.get("seed", 0)) + int(eval_index),
+                random_state=int(self.cfg.get("seed", 0)) + int(tune_index),
             )
             metric_rows.append(
                 {
                     "plugin": self.name,
                     "dataset": dataset_name,
                     "metric": "ri",
-                    "eval_index": int(eval_index),
+                    "tune_index": int(tune_index),
                     "images_seen": int(images_seen),
                     "value": float(ri.value),
                     "std": float(ri.std),
@@ -270,7 +270,7 @@ class PathoROBPlugin(BenchmarkPlugin):
             )
             log_metrics[f"{dataset_name}/ri"] = float(ri.value)
 
-        if self._metric_enabled(apd_cfg, eval_index=int(eval_index), default_every_n=5):
+        if self._metric_enabled(apd_cfg, tune_index=int(tune_index), default_every_n=5):
             split_frames = self._ensure_apd_splits(dataset_name, dataset_cfg, manifest_df)
             aligned: list[pd.DataFrame] = []
             for sp in split_frames:
@@ -284,7 +284,7 @@ class PathoROBPlugin(BenchmarkPlugin):
                 dataset_name=dataset_name,
                 features=features,
                 all_splits=aligned,
-                seed=int(self.cfg.get("seed", 0)) + int(eval_index),
+                seed=int(self.cfg.get("seed", 0)) + int(tune_index),
             )
 
             metric_rows.extend(
@@ -293,7 +293,7 @@ class PathoROBPlugin(BenchmarkPlugin):
                         "plugin": self.name,
                         "dataset": dataset_name,
                         "metric": "apd_id",
-                        "eval_index": int(eval_index),
+                        "tune_index": int(tune_index),
                         "images_seen": int(images_seen),
                         "value": float(apd.apd_id),
                         "std": float(apd.apd_id_std),
@@ -304,7 +304,7 @@ class PathoROBPlugin(BenchmarkPlugin):
                         "plugin": self.name,
                         "dataset": dataset_name,
                         "metric": "apd_ood",
-                        "eval_index": int(eval_index),
+                        "tune_index": int(tune_index),
                         "images_seen": int(images_seen),
                         "value": float(apd.apd_ood),
                         "std": float(apd.apd_ood_std),
@@ -315,7 +315,7 @@ class PathoROBPlugin(BenchmarkPlugin):
                         "plugin": self.name,
                         "dataset": dataset_name,
                         "metric": "apd_avg",
-                        "eval_index": int(eval_index),
+                        "tune_index": int(tune_index),
                         "images_seen": int(images_seen),
                         "value": float(apd.apd_avg),
                         "std": float(apd.apd_avg_std),
@@ -335,7 +335,7 @@ class PathoROBPlugin(BenchmarkPlugin):
                 rho_str = f"{rho:.2f}".replace(".", "_")
                 log_metrics[f"{dataset_name}/acc_ood_rho{rho_str}"] = float(mean_acc)
 
-        if self._metric_enabled(cl_cfg, eval_index=int(eval_index), default_every_n=5):
+        if self._metric_enabled(cl_cfg, tune_index=int(tune_index), default_every_n=5):
             cl = compute_clustering_score(
                 dataset_name=dataset_name,
                 features=features,
@@ -344,14 +344,14 @@ class PathoROBPlugin(BenchmarkPlugin):
                 k_min=int(cl_cfg.get("k_min", 2)),
                 k_max=int(cl_cfg.get("k_max", 10)),
                 max_pairs=(None if int(self.cfg.get("max_pairs", 0)) <= 0 else int(self.cfg.get("max_pairs", 0))),
-                random_state=int(self.cfg.get("seed", 0)) + int(eval_index),
+                random_state=int(self.cfg.get("seed", 0)) + int(tune_index),
             )
             metric_rows.append(
                 {
                     "plugin": self.name,
                     "dataset": dataset_name,
                     "metric": "clustering_score",
-                    "eval_index": int(eval_index),
+                    "tune_index": int(tune_index),
                     "images_seen": int(images_seen),
                     "value": float(cl.score),
                     "std": float(cl.std),
@@ -364,7 +364,7 @@ class PathoROBPlugin(BenchmarkPlugin):
         return metric_rows, log_metrics
 
     @torch.no_grad()
-    def run(self, teacher, eval_index: int, images_seen: int) -> PluginResult:
+    def run(self, teacher, tune_index: int, images_seen: int) -> PluginResult:
         teacher_backbone = teacher.module if hasattr(teacher, "module") else teacher
         teacher_backbone.eval()
 
@@ -374,7 +374,7 @@ class PathoROBPlugin(BenchmarkPlugin):
         datasets_cfg = dict(self.cfg.get("datasets", {}) or {})
         any_enabled = any(bool(dict(v).get("enable", False)) for v in datasets_cfg.values())
         if not any_enabled:
-            logger.warning("WARNING! [PathoROB] No datasets are enabled for evaluation.")
+            logger.warning("WARNING! [PathoROB] No datasets are enabled for tuning.")
 
         for dataset_name, raw_cfg in datasets_cfg.items():
             dataset_cfg = dict(raw_cfg or {})
@@ -385,15 +385,15 @@ class PathoROBPlugin(BenchmarkPlugin):
                     dataset_name=str(dataset_name),
                     dataset_cfg=dataset_cfg,
                     teacher_backbone=teacher_backbone,
-                    eval_index=int(eval_index),
+                    tune_index=int(tune_index),
                     images_seen=int(images_seen),
                 )
                 all_rows.extend(rows)
                 all_logs.update(logs)
             except Exception as exc:
-                err_path = self.metrics_dir / f"eval_{int(eval_index):04d}_{dataset_name}_error.txt"
+                err_path = self.metrics_dir / f"tune_{int(tune_index):04d}_{dataset_name}_error.txt"
                 err_path.write_text(traceback.format_exc(), encoding="utf-8")
-                logger.error("[PathoROB] %s failed at eval_index %s: %s", dataset_name, int(eval_index), exc)
+                logger.error("[PathoROB] %s failed at tune_index %s: %s", dataset_name, int(tune_index), exc)
 
         return PluginResult(
             name=self.name,

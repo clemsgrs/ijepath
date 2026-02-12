@@ -101,6 +101,11 @@ CUDA_VISIBLE_DEVICES=0,1 python main.py \
 # Image-budget semantics:
 # - optimization.total_images_budget controls total training length
 # - tuning/checkpoint events are triggered by images_seen thresholds
+# - logging.step_log_every_images controls step-log cadence:
+#   - 10000 => log every 10k images
+#   - 0.1 => log every 10% of optimization.total_images_budget
+#   - 0 disables cadence logging (NaN/Inf still logs immediately)
+#   - percent strings like "10%" are not supported
 ```
 
 ## Diversity budget
@@ -140,12 +145,15 @@ Async tuning behavior and key knobs:
 - `tuning.execution.device=auto`: reserves one visible GPU for tuning automatically (`cuda:<id>` also supported).
 - `tuning.execution.max_pending_jobs`: queue cap for pending eval snapshots.
 - `tuning.execution.coalesce_policy=newest`: stale queued evals are dropped first under backlog.
-- `tuning.execution.poll_every_steps`: how often training polls completed eval results.
+- `tuning.execution.poll_every_steps`: poll cadence in optimizer steps. `auto` (default) resolves to `round(tune_every / (global_batch_size * 20))`.
 - `tuning.execution.keep_last_n_snapshots`: limits on-disk teacher snapshot retention.
 - `tuning.plugins[*].feature_num_workers`, `feature_persistent_workers`, `feature_prefetch_factor`: feature extraction loader throughput controls.
-- `tuning.plugins[*].ri/apd/clustering.every_n_evals`: cadence controls for heavy metrics.
+- `tuning.plugins[*].ri/apd/clustering.every_n_evals`: cadence controls for heavy metrics (counted in tune runs).
+- Tune metadata logs use `tune/tune_index` and `tune/tune_images_seen`.
 - `training.log_every`: cadence for `train/*` W&B logs in images seen (plus a final flush at run end).
 - `tuning.tune_every`: cadence for tuning events in images seen.
+- `data.anchor_stream_batch_size`: parquet decode chunk size for anchor streaming (`2048` default). Increasing to `4096`/`8192` can reduce periodic rollover stalls at higher memory cost.
+- `logging.performance_debug.*`: optional rolling step timing diagnostics for spotting data-wait spikes and intermittent loader stalls.
 - Tune metrics log with `images_seen` as their W&B step metric so tuning curves can be plotted directly on image budget.
 
 Checkpoint semantics:
@@ -154,6 +162,14 @@ Checkpoint semantics:
   - `<write_tag>-img1000000.pth.tar`
   - `<write_tag>-img2000000.pth.tar`
 - If robustness early stopping is enabled and improves, writes `best-robustness.pth.tar`
+
+Performance-debug example (for periodic tqdm hiccups):
+```bash
+python main.py --profile-config ... --run-config ... \
+  logging.performance_debug.enable=true \
+  logging.performance_debug.log_every_images=2048 \
+  data.anchor_stream_batch_size=4096
+```
 
 ## Preview generation
 ```bash

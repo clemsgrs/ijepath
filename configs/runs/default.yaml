@@ -73,6 +73,10 @@ tuning:
   seed: 0
   tune_every: 1000000  # Run tuner every N global images seen.
   run_baseline_at_zero: true
+  execution:
+    mode: async
+    device: auto
+    poll_every_steps: auto  # Auto = round(tune_every / (global_batch_size * 20)); set int to override.
   plugins: []
   early_stopping:
     enable: false
@@ -80,8 +84,8 @@ tuning:
       plugin: null
       dataset: null
       metric: null
-    patience_evals: 5  # Stop after this many non-improving tuning evaluations.
-    min_evals: 3  # Minimum number of evaluations before stop condition is allowed.
+    patience_evals: 5  # Stop after this many non-improving tuning runs.
+    min_evals: 3  # Minimum number of tuning runs before stop condition is allowed.
     stop_training: false  # If true, terminate JEPA training once the early-stopping criterion is met.
     save_best_checkpoint: true
     best_checkpoint_name: best-robustness.pth.tar
@@ -89,7 +93,7 @@ tuning:
 logging:
   folder: outputs/run
   write_tag: jepa-run
-  step_log_every_iters: 0  # 0 => disable per-step terminal logs and rely on per-pass summaries.
+  step_log_every_images: 0  # int images or float fraction in [0,1] (e.g. 10000 or 0.1); 0 disables cadence logs; "10%" is invalid.
 
 wandb:
   enable: false
