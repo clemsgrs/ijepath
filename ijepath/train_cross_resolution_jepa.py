@@ -368,6 +368,40 @@ def build_pass_train_results(
     }
 
 
+def build_pass_loss_train_results(*, loss_avg: float, loss_min: float, loss_max: float) -> dict[str, float]:
+    return {
+        "loss_pass_avg": float(loss_avg),
+        "loss_pass_min": float(loss_min),
+        "loss_pass_max": float(loss_max),
+    }
+
+
+def log_pass_loss_metrics_to_wandb(
+    *,
+    images_seen: int,
+    pass_index: int,
+    loss_avg: float,
+    loss_min: float,
+    loss_max: float,
+) -> dict[str, float | int]:
+    pass_log: dict[str, float | int] = {
+        "pass_index": int(pass_index),
+        "images_seen": int(images_seen),
+    }
+    update_log_dict(
+        "train",
+        build_pass_loss_train_results(
+            loss_avg=float(loss_avg),
+            loss_min=float(loss_min),
+            loss_max=float(loss_max),
+        ),
+        pass_log,
+        step="images_seen",
+    )
+    log_images_seen_dict(pass_log, images_seen=int(images_seen))
+    return pass_log
+
+
 def get_train_step_csv_columns() -> tuple[tuple[str, str], ...]:
     return (
         ("%d", "images_seen"),
@@ -1605,6 +1639,14 @@ def main(
                 f"iter_time_ms={float(time_meter.avg):.1f} "
                 f"masks(avg)={float(maskA_meter.avg):.1f}/{float(maskB_meter.avg):.1f}"
             )
+            if wandb_enabled:
+                log_pass_loss_metrics_to_wandb(
+                    images_seen=int(images_seen),
+                    pass_index=int(current_pass_index),
+                    loss_avg=float(loss_meter.avg),
+                    loss_min=float(loss_meter.min),
+                    loss_max=float(loss_meter.max),
+                )
 
             save_snapshot(
                 build_snapshot(pass_id=current_pass_index, loss_avg=float(loss_meter.avg)),
