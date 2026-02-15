@@ -1,3 +1,5 @@
+pretraining: {}  # mode is required per-run via pretraining.mode (canonical|cross_resolution)
+
 data:
   # -- Runtime and loading
   batch_size_per_gpu: 32  # global_batch_size = batch_size_per_gpu * world_size.
@@ -39,6 +41,16 @@ data:
   spacing_tolerance: 0.05  # Relative tolerance for near-native spacing matching.
   low_anchor_pass_warning_threshold: 1.0  # Warn when total budget covers less than one full anchor pass.
   high_anchor_pass_warning_threshold: 5.0  # Warn when anchors are expected to be reused heavily.
+
+canonical:
+  input_mpp: 0.5
+  source_tile_size_px: 256
+  crop_size_px: 224
+  transform_preset: official_ijepa
+  mask_preset: official_ijepa_multiblock
+  num_enc_masks: 1
+  num_pred_masks: 4
+  min_keep: 16
 
 meta:
   load_checkpoint: false

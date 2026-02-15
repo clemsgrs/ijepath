@@ -13,6 +13,7 @@ def _write_yaml(path: Path, payload: dict) -> None:
 
 def _base_cfg() -> dict:
     return {
+        "pretraining": {"mode": "cross_resolution"},
         "data": {
             "slide_manifest_csv": "a.csv",
             "slide_metadata_parquet": "b.jsonl",

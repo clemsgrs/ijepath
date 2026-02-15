@@ -1,10 +1,14 @@
 import math
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
 import wholeslidedata as wsd
+
+
+logger = logging.getLogger("ijepath")
 
 
 def spacing_pixels_to_level0_pixels(
@@ -68,12 +72,32 @@ class WholeSlideDataReaderAdapter:
     ) -> None:
         self.wsi_path = str(wsi_path)
         self.mask_path = None if mask_path is None else str(mask_path)
-        self.backend = backend
+        requested_backend = str(backend)
+        self.backend = requested_backend
+        self.fallback_backend: Optional[str] = None
 
-        self.wsi = wsd.WholeSlideImage(Path(self.wsi_path), backend=self.backend)
-        self.mask = None
+        if requested_backend == "asap":
+            try:
+                self.wsi, self.mask = self._open_with_backend("asap")
+            except Exception as asap_exc:
+                self.wsi, self.mask = self._open_with_backend("openslide")
+                self.backend = "openslide"
+                self.fallback_backend = "openslide"
+                logger.warning(
+                    "Falling back WSI backend from 'asap' to 'openslide' for %s due to: %s: %s",
+                    self.wsi_path,
+                    type(asap_exc).__name__,
+                    asap_exc,
+                )
+        else:
+            self.wsi, self.mask = self._open_with_backend(requested_backend)
+
+    def _open_with_backend(self, backend: str):
+        wsi = wsd.WholeSlideImage(Path(self.wsi_path), backend=backend)
+        mask = None
         if self.mask_path:
-            self.mask = wsd.WholeSlideImage(Path(self.mask_path), backend=self.backend)
+            mask = wsd.WholeSlideImage(Path(self.mask_path), backend=backend)
+        return wsi, mask
 
     @property
     def wsi_spacings(self):

@@ -3,6 +3,9 @@
 # - configs/defaults.yaml
 # - a chosen profile config
 
+pretraining:
+  mode: null  # REQUIRED: canonical | cross_resolution
+
 data:
   # Batch/memory/runtime (defaults from defaults.yaml).
   batch_size_per_gpu: 32  # Per-GPU microbatch. Global batch = batch_size_per_gpu * world_size.
@@ -38,6 +41,16 @@ data:
   spacing_tolerance: 0.05
   low_anchor_pass_warning_threshold: 1.0
   high_anchor_pass_warning_threshold: 5.0
+
+canonical:
+  input_mpp: 0.5
+  source_tile_size_px: 256
+  crop_size_px: 224
+  transform_preset: official_ijepa
+  mask_preset: official_ijepa_multiblock
+  num_enc_masks: 1
+  num_pred_masks: 4
+  min_keep: 16
 
 meta:
   load_checkpoint: false

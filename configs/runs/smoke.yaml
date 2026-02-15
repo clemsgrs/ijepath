@@ -1,2 +1,5 @@
+pretraining:
+  mode: cross_resolution
+
 optimization:
   total_images_budget: 10

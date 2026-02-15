@@ -8,6 +8,7 @@ import torch
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+import ijepath.datasets.wsi_readers.wholeslidedata_reader_adapter as reader_mod
 from ijepath.datasets.cross_resolution_loader_factory import make_cross_resolution_loader
 from ijepath.datasets.cross_resolution_wsi_dataset import CrossResolutionWSIDataset
 from ijepath.datasets.wsi_readers.wholeslidedata_reader_adapter import (
@@ -60,6 +61,32 @@ def _write_anchor_manifest(path: Path, rows: list[dict]):
 
 def _write_min_anchor_csv(path: Path, row: dict):
     _write_anchor_manifest(path, [row])
+
+
+def test_reader_falls_back_to_openslide_when_asap_init_fails(monkeypatch, tmp_path: Path):
+    calls: list[tuple[str, str]] = []
+
+    class _FakeSlide:
+        def __init__(self, path, backend):
+            calls.append((str(path), str(backend)))
+            if str(backend) == "asap":
+                raise RuntimeError("asap backend unavailable")
+            self.spacings = [0.5]
+            self.shapes = [(64, 64)]
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(reader_mod.wsd, "WholeSlideImage", _FakeSlide)
+
+    wsi_path = tmp_path / "dummy.tif"
+    wsi_path.write_text("x", encoding="utf-8")
+
+    reader = WholeSlideDataReaderAdapter(wsi_path=str(wsi_path), backend="asap")
+    assert reader.backend == "openslide"
+    assert reader.fallback_backend == "openslide"
+    assert calls[0][1] == "asap"
+    assert calls[1][1] == "openslide"
 
 
 def test_reader_level0_border_in_bounds_threshold():

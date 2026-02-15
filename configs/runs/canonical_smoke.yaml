@@ -1,0 +1,15 @@
+pretraining:
+  mode: canonical
+
+canonical:
+  input_mpp: 0.5
+  source_tile_size_px: 256
+  crop_size_px: 224
+  transform_preset: official_ijepa
+  mask_preset: official_ijepa_multiblock
+  num_enc_masks: 1
+  num_pred_masks: 4
+  min_keep: 16
+
+optimization:
+  total_images_budget: 10
