@@ -8,6 +8,7 @@
 import argparse
 
 import multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor
 
 import os
 import re
@@ -65,14 +66,64 @@ def _replace_opt(opts: list[str] | None, prefix: str, value: str) -> list[str]:
     return out
 
 
+_SPINNER_FRAMES = ("|", "/", "-", "\\")
+_SPINNER_POLL_INTERVAL_S = 0.2
+_NON_TTY_PROGRESS_INTERVAL_S = 10.0
+
+
+def _format_elapsed(seconds: float) -> str:
+    total = max(0, int(seconds))
+    mins, secs = divmod(total, 60)
+    hours, mins = divmod(mins, 60)
+    if hours > 0:
+        return f"{hours:02d}:{mins:02d}:{secs:02d}"
+    return f"{mins:02d}:{secs:02d}"
+
+
+def _stage_label(cmd: list[str]) -> str:
+    if len(cmd) > 1:
+        return Path(str(cmd[1])).name
+    return Path(str(cmd[0])).name
+
+
 def _run_checked(cmd: list[str]) -> None:
-    completed = subprocess.run(
-        cmd,
-        cwd=Path(__file__).resolve().parent,
-        check=False,
-        text=True,
-        capture_output=True,
-    )
+    stage = _stage_label(cmd)
+    repo_root = Path(__file__).resolve().parent
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            subprocess.run,
+            cmd,
+            cwd=repo_root,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        start = time.monotonic()
+        spinner_index = 0
+        is_tty = bool(getattr(sys.stderr, "isatty", lambda: False)())
+        last_non_tty_log = -_NON_TTY_PROGRESS_INTERVAL_S
+
+        while not future.done():
+            elapsed = time.monotonic() - start
+            frame = _SPINNER_FRAMES[spinner_index % len(_SPINNER_FRAMES)]
+            message = f"[{frame}] Running {stage} (elapsed {_format_elapsed(elapsed)})"
+
+            if is_tty:
+                print(f"\r{message}", end="", file=sys.stderr, flush=True)
+            elif elapsed - last_non_tty_log >= _NON_TTY_PROGRESS_INTERVAL_S:
+                print(message, file=sys.stderr, flush=True)
+                last_non_tty_log = elapsed
+
+            spinner_index += 1
+            time.sleep(_SPINNER_POLL_INTERVAL_S)
+
+        completed = future.result()
+        if is_tty:
+            elapsed = time.monotonic() - start
+            done = f"[done] Finished {stage} in {_format_elapsed(elapsed)}"
+            print(f"\r{done}{' ' * 16}", file=sys.stderr, flush=True)
+
     if completed.returncode != 0:
         raise SystemExit(
             "Pipeline stage failed:\n"
