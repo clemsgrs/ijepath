@@ -1,4 +1,5 @@
 import main as main_entry
+import io
 import torch
 import pytest
 from pathlib import Path
@@ -622,6 +623,58 @@ def test_run_checked_raises_with_command_output_on_failure(monkeypatch):
         text = str(exc)
         assert "Pipeline stage failed" in text
         assert "stdout" in text and "stderr" in text
+
+
+def test_run_checked_streams_subprocess_output_when_stderr_is_tty(monkeypatch):
+    kwargs_seen: dict[str, object] = {}
+
+    class _Ok:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    class _TTYBuffer(io.StringIO):
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr(main_entry.sys, "stderr", _TTYBuffer())
+
+    def _fake_run(*_args, **kwargs):
+        kwargs_seen.update(kwargs)
+        return _Ok()
+
+    monkeypatch.setattr(main_entry.subprocess, "run", _fake_run)
+
+    main_entry._run_checked(["echo", "hello"])
+
+    assert kwargs_seen.get("capture_output") is False
+    assert kwargs_seen.get("stdout") is None
+    assert kwargs_seen.get("stderr") is None
+
+
+def test_run_checked_captures_subprocess_output_when_stderr_is_not_tty(monkeypatch):
+    kwargs_seen: dict[str, object] = {}
+
+    class _Ok:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    class _NonTTYBuffer(io.StringIO):
+        def isatty(self):
+            return False
+
+    monkeypatch.setattr(main_entry.sys, "stderr", _NonTTYBuffer())
+
+    def _fake_run(*_args, **kwargs):
+        kwargs_seen.update(kwargs)
+        return _Ok()
+
+    monkeypatch.setattr(main_entry.subprocess, "run", _fake_run)
+
+    main_entry._run_checked(["echo", "hello"])
+
+    assert kwargs_seen.get("capture_output") is True
 
 
 def test_resolve_reserved_tuning_device_token_returns_none_when_tuning_disabled(monkeypatch):

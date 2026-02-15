@@ -89,6 +89,7 @@ def _stage_label(cmd: list[str]) -> str:
 def _run_checked(cmd: list[str]) -> None:
     stage = _stage_label(cmd)
     repo_root = Path(__file__).resolve().parent
+    is_tty = bool(getattr(sys.stderr, "isatty", lambda: False)())
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
@@ -97,11 +98,10 @@ def _run_checked(cmd: list[str]) -> None:
             cwd=repo_root,
             check=False,
             text=True,
-            capture_output=True,
+            capture_output=not is_tty,
         )
         start = time.monotonic()
         spinner_index = 0
-        is_tty = bool(getattr(sys.stderr, "isatty", lambda: False)())
         last_non_tty_log = -_NON_TTY_PROGRESS_INTERVAL_S
 
         while not future.done():
