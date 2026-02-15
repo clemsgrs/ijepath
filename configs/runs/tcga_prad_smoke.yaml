@@ -1,3 +1,6 @@
+pretraining:
+  mode: cross_resolution
+
 data:
   slide_manifest_csv: data/tcga-prad/manifests/tcga_prad_slides_with_tissue_masks.csv
   slide_metadata_parquet: data/tcga-prad/indexes/slide_metadata.parquet

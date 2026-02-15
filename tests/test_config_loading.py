@@ -19,6 +19,7 @@ def test_layered_config_merge_and_opts_override(tmp_path: Path):
     _write_yaml(
         default_cfg,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "default_manifest.csv",
                 "slide_metadata_parquet": "default_index.jsonl",
@@ -48,6 +49,7 @@ def test_layered_config_merge_and_opts_override(tmp_path: Path):
     _write_yaml(
         run_cfg,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "run_manifest.csv",
                 "slide_metadata_parquet": "run_index.jsonl",
@@ -81,6 +83,7 @@ def test_layered_config_requires_required_paths(tmp_path: Path):
     _write_yaml(
         default_cfg,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": None,
                 "slide_metadata_parquet": None,
@@ -116,6 +119,7 @@ def test_layered_config_enforces_num_pred_masks_matches_targets(tmp_path: Path):
     _write_yaml(
         default_cfg,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "b.jsonl",
@@ -151,6 +155,7 @@ def test_layered_config_rejects_conflicting_duplicate_values_within_profile(tmp_
     _write_yaml(
         default_cfg,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "b.jsonl",
@@ -186,6 +191,7 @@ def test_legacy_batch_size_is_rejected(tmp_path: Path):
     _write_yaml(
         default_cfg,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "b.jsonl",
@@ -218,6 +224,7 @@ def test_legacy_anchor_catalog_and_slide_index_keys_are_rejected(tmp_path: Path)
     _write_yaml(
         cfg_path,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_index_jsonl": "legacy_index.jsonl",
@@ -246,6 +253,7 @@ def test_training_cadence_values_must_be_positive_when_provided(tmp_path: Path):
     _write_yaml(
         cfg_path,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "index.parquet",
@@ -274,6 +282,7 @@ def test_legacy_checkpoint_and_tuning_schedule_keys_are_rejected(tmp_path: Path)
     _write_yaml(
         cfg_path,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "index.parquet",
@@ -302,6 +311,7 @@ def test_legacy_tuning_schedule_key_is_rejected(tmp_path: Path):
     _write_yaml(
         cfg_path,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "index.parquet",
@@ -329,6 +339,7 @@ def test_legacy_wandb_log_every_images_key_is_rejected(tmp_path: Path):
     _write_yaml(
         cfg_path,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "index.parquet",
@@ -356,6 +367,7 @@ def test_legacy_logging_folder_key_is_rejected(tmp_path: Path):
     _write_yaml(
         cfg_path,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "index.parquet",
@@ -383,6 +395,7 @@ def test_output_root_and_cache_root_are_accepted(tmp_path: Path):
     _write_yaml(
         cfg_path,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "index.parquet",
@@ -414,6 +427,7 @@ def test_output_run_root_key_is_rejected(tmp_path: Path):
     _write_yaml(
         cfg_path,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "index.parquet",
@@ -444,6 +458,7 @@ def test_anchor_stream_batch_size_must_be_positive(tmp_path: Path):
     _write_yaml(
         cfg_path,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "index.parquet",
@@ -471,6 +486,7 @@ def test_performance_debug_logging_values_must_be_positive_when_enabled(tmp_path
     _write_yaml(
         cfg_path,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "index.parquet",
@@ -505,6 +521,7 @@ def test_legacy_step_log_every_iters_key_is_rejected(tmp_path: Path):
     _write_yaml(
         cfg_path,
         {
+            "pretraining": {"mode": "cross_resolution"},
             "data": {
                 "slide_manifest_csv": "a.csv",
                 "slide_metadata_parquet": "index.parquet",
@@ -530,7 +547,8 @@ def test_legacy_step_log_every_iters_key_is_rejected(tmp_path: Path):
 def test_step_log_every_images_rejects_invalid_type_and_range(tmp_path: Path):
     cfg_path = tmp_path / "cfg.yaml"
     base_cfg = {
-        "data": {
+            "pretraining": {"mode": "cross_resolution"},
+            "data": {
             "slide_manifest_csv": "a.csv",
             "slide_metadata_parquet": "index.parquet",
             "anchor_catalog_manifest": "manifest.json",

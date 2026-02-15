@@ -1,0 +1,12 @@
+profile_id: canonical_20x_256_224
+# Anchor indexing geometry (shared artifact contract with other modes).
+context_mpp: 0.5
+target_mpp: 0.5
+context_fov_um: 256
+target_fov_um: 128
+targets_per_context: 4
+min_tissue_fraction: 0.2
+anchor_stride_fraction: 0.5
+target_margin_um: 16
+spacing_tolerance: 0.05
+seed: 0

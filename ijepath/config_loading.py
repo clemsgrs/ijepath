@@ -189,6 +189,19 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
     if "schedule" in cfg.get("tuning", {}):
         raise ValueError("Unsupported config value: tuning.schedule")
 
+    pretraining_cfg = dict(cfg.get("pretraining", {}) or {})
+    pretraining_mode_raw = pretraining_cfg.get("mode", None)
+    if pretraining_mode_raw is None or not str(pretraining_mode_raw).strip():
+        raise ValueError("Missing required config value: pretraining.mode")
+    pretraining_mode = str(pretraining_mode_raw).strip().lower()
+    if pretraining_mode not in {"canonical", "cross_resolution"}:
+        raise ValueError(
+            "pretraining.mode must be one of {'canonical', 'cross_resolution'}, "
+            f"got {pretraining_mode_raw!r}"
+        )
+    pretraining_cfg["mode"] = pretraining_mode
+    cfg["pretraining"] = pretraining_cfg
+
     output_cfg = dict(cfg.get("output", {}) or {})
     output_root = output_cfg.get("root", "outputs")
     if output_root is None or not str(output_root).strip():
@@ -204,18 +217,39 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         ("data", "slide_metadata_parquet"),
         ("data", "anchor_catalog_manifest"),
     )
-    required_geometry = (
-        ("data", "context_mpp"),
-        ("data", "target_mpp"),
-        ("data", "context_fov_um"),
-        ("data", "target_fov_um"),
-        ("data", "targets_per_context"),
-    )
 
-    for section, key in required_paths + required_geometry:
+    for section, key in required_paths:
         value = cfg.get(section, {}).get(key)
         if value is None:
             raise ValueError(f"Missing required config value: {section}.{key}")
+
+    if pretraining_mode == "cross_resolution":
+        required_geometry = (
+            ("data", "context_mpp"),
+            ("data", "target_mpp"),
+            ("data", "context_fov_um"),
+            ("data", "target_fov_um"),
+            ("data", "targets_per_context"),
+        )
+        for section, key in required_geometry:
+            value = cfg.get(section, {}).get(key)
+            if value is None:
+                raise ValueError(f"Missing required config value: {section}.{key}")
+    else:
+        required_canonical = (
+            ("canonical", "input_mpp"),
+            ("canonical", "source_tile_size_px"),
+            ("canonical", "crop_size_px"),
+            ("canonical", "transform_preset"),
+            ("canonical", "mask_preset"),
+            ("canonical", "num_enc_masks"),
+            ("canonical", "num_pred_masks"),
+            ("canonical", "min_keep"),
+        )
+        for section, key in required_canonical:
+            value = cfg.get(section, {}).get(key)
+            if value is None:
+                raise ValueError(f"Missing required config value: {section}.{key}")
 
     architecture = cfg.get("meta", {}).get("architecture")
     if architecture is None:
@@ -237,6 +271,28 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         raise ValueError("Missing required config value: optimization.total_images_budget")
     if int(total_images_budget) <= 0:
         raise ValueError("optimization.total_images_budget must be > 0")
+
+    if pretraining_mode == "canonical":
+        canonical_cfg = dict(cfg.get("canonical", {}) or {})
+        input_mpp = float(canonical_cfg["input_mpp"])
+        source_tile_size_px = int(canonical_cfg["source_tile_size_px"])
+        crop_size_px = int(canonical_cfg["crop_size_px"])
+        if input_mpp <= 0:
+            raise ValueError("canonical.input_mpp must be > 0")
+        if source_tile_size_px <= 0:
+            raise ValueError("canonical.source_tile_size_px must be > 0")
+        if crop_size_px <= 0:
+            raise ValueError("canonical.crop_size_px must be > 0")
+        if source_tile_size_px < crop_size_px:
+            raise ValueError("canonical.source_tile_size_px must be >= canonical.crop_size_px")
+        if crop_size_px % int(patch_size) != 0:
+            raise ValueError("canonical.crop_size_px must be divisible by meta.patch_size")
+        if int(canonical_cfg["num_enc_masks"]) <= 0:
+            raise ValueError("canonical.num_enc_masks must be > 0")
+        if int(canonical_cfg["num_pred_masks"]) <= 0:
+            raise ValueError("canonical.num_pred_masks must be > 0")
+        if int(canonical_cfg["min_keep"]) <= 0:
+            raise ValueError("canonical.min_keep must be > 0")
 
     training_log_every = cfg.get("training", {}).get("log_every", None)
     if training_log_every is not None and int(training_log_every) <= 0:
@@ -293,16 +349,17 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         if perf_slow_data_wait_ms <= 0:
             raise ValueError("logging.performance_debug.slow_data_wait_ms must be > 0")
 
-    targets_per_context = int(cfg["data"]["targets_per_context"])
-    mask_cfg = cfg.setdefault("mask", {})
-    num_pred_masks = mask_cfg.get("num_pred_masks")
-    if num_pred_masks is None:
-        mask_cfg["num_pred_masks"] = targets_per_context
-    elif int(num_pred_masks) != targets_per_context:
-        raise ValueError(
-            "mask.num_pred_masks must match data.targets_per_context "
-            f"(got {num_pred_masks} vs {targets_per_context})"
-        )
+    if pretraining_mode == "cross_resolution":
+        targets_per_context = int(cfg["data"]["targets_per_context"])
+        mask_cfg = cfg.setdefault("mask", {})
+        num_pred_masks = mask_cfg.get("num_pred_masks")
+        if num_pred_masks is None:
+            mask_cfg["num_pred_masks"] = targets_per_context
+        elif int(num_pred_masks) != targets_per_context:
+            raise ValueError(
+                "mask.num_pred_masks must match data.targets_per_context "
+                f"(got {num_pred_masks} vs {targets_per_context})"
+            )
 
     tuning_cfg = dict(cfg.get("tuning", {}) or {})
     if not bool(tuning_cfg.get("enable", False)):

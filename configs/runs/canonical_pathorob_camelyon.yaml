@@ -1,0 +1,115 @@
+pretraining:
+  mode: canonical
+
+data:
+  slide_manifest_csv: /data/pathology/projects/clement/discern/multi-center-prostate.csv
+  slide_metadata_parquet: data/3-center-prostate/indexes/slide_metadata.parquet
+  anchor_catalog_manifest: data/3-center-prostate/indexes/anchor_catalog_manifest.json
+  batch_size_per_gpu: 32
+  num_workers: 16
+  anchor_stream_batch_size: 2048
+
+canonical:
+  input_mpp: 0.5
+  source_tile_size_px: 256
+  crop_size_px: 224
+  transform_preset: official_ijepa
+  mask_preset: official_ijepa_multiblock
+  num_enc_masks: 1
+  num_pred_masks: 4
+  min_keep: 16
+
+meta:
+  architecture: vit_small
+  patch_size: 16
+  pred_depth: 3
+  pred_emb_dim: 192
+  use_bfloat16: true
+  load_checkpoint: false
+
+optimization:
+  total_images_budget: 1000000
+  warmup: 0.1
+  lr: 0.0002
+  start_lr: 0.00002
+  final_lr: 0.000001
+  weight_decay: 0.04
+  final_weight_decay: 0.1
+  ema: [0.996, 1.0]
+
+tuning:
+  enable: true
+  seed: 0
+  tune_every: 10000
+  run_baseline_at_zero: true
+  execution:
+    mode: async
+    device: auto
+    max_pending_jobs: 2
+    coalesce_policy: newest
+    poll_every_steps: auto
+    fail_on_backlog: false
+    keep_last_n_snapshots: 2
+  data_dir: /data/pathology/projects/clement/discern/data/eval
+  plugins:
+    - type: pathorob
+      enable: true
+      batch_size_per_gpu: ${data.batch_size_per_gpu}
+      num_workers: ${data.num_workers}
+      feature_num_workers: ${data.num_workers}
+      feature_persistent_workers: true
+      feature_prefetch_factor: 4
+      transforms:
+        resize: 256
+        crop_size: null
+        normalize: imagenet
+      datasets:
+        camelyon:
+          enable: true
+          manifest_csv: ${tuning.data_dir}/pathorob/camelyon/benchmark.csv
+          id_centers: ["RUMC", "UMCU"]
+          ood_centers: ["CWZ", "RST", "LPON"]
+      ri:
+        enable: true
+        every_n_evals: 1
+        k_candidates: [3, 5, 7, 10, 15]
+      apd:
+        enable: true
+        every_n_evals: 5
+        mode: custom
+        correlation_levels: [0.0, 0.14, 0.29, 0.43, 0.57, 0.71, 0.86, 1.0]
+        repetitions: 3
+        id_test_fraction: 0.2
+      clustering:
+        enable: true
+        every_n_evals: 5
+        repeats: 5
+        k_min: 2
+        k_max: 10
+  early_stopping:
+    enable: false
+    selection:
+      plugin: pathorob
+      dataset: camelyon
+      metric: apd_avg
+    patience_evals: 5
+    min_evals: 3
+    stop_training: false
+    save_best_checkpoint: true
+    best_checkpoint_name: best-robustness.pth.tar
+
+training:
+  log_every: 10000
+  save_every: 10000
+
+output:
+  root: outputs
+  shared_cache_root: ${output.root}/cache
+
+logging:
+  write_tag: jepa-canonical-pathorob
+  step_log_every_images: 0
+
+wandb:
+  enable: true
+  exp_name: pathorob-camelyon-canonical

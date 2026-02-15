@@ -1,15 +1,18 @@
 # I-JEPATH
 
-Pathology-focused adaptation of I-JEPA for cross-resolution self-supervised learning on whole-slide images.
+Pathology-focused adaptation of I-JEPA for whole-slide images with explicit mode routing:
+- canonical I-JEPA (`pretraining.mode=canonical`)
+- cross-resolution pathology extension (`pretraining.mode=cross_resolution`)
 
 ## Why this project
 Standard SSL in pathology can overfit stain/scanner shortcuts. This project targets morphology-centric representations by predicting high-resolution target embeddings from lower-resolution tissue context (JEPA-style, no pixel reconstruction).
 
 ## Current scope
+- Canonical single-scale I-JEPA pretraining for pathology (`256 -> 224` views at configurable `canonical.input_mpp`).
 - Cross-resolution JEPA pretraining for pathology (`~1.0 mpp` context -> `~0.5 mpp` targets).
 - Profile-aware anchor indexing from WSI + tissue masks.
-- Online context/target extraction with target-footprint non-leakage masking.
-- Smoke-trainable stage-1 pipeline and visualization QA.
+- Fast parquet/pyarrow anchor streaming and WSI reader caching for both modes.
+- Async PathoROB tuning during pretraining (image-budget cadence).
 
 ## Planned after v1
 - Add same-resolution JEPA batches (for example `20x -> 20x`) to improve nuclear-detail fidelity while keeping cross-resolution training.
@@ -20,7 +23,9 @@ Standard SSL in pathology can overfit stain/scanner shortcuts. This project targ
 - Add optional I-JEPA-style variable target geometry (per-target size and aspect ratio), first as an ablation against fixed-square baseline.
 
 ## Docs
-- `docs/scalable_pipeline_cutover.md`
+- `docs/pathology/README.md`
+- `docs/pathology/canonical_ijepa.md`
+- `docs/pathology/dino_comparison_protocol.md`
 
 ## Sample curation pipeline
 <img src="assets/ijepath_flow.gif" alt="TCGA-HC-8257 anchor A001 cross-resolution flow" width="920" />
@@ -64,7 +69,7 @@ python scripts/build_valid_context_anchor_catalog.py \
   --profile configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
   --output ${DATA_ROOT}/indexes/anchor_catalog_manifest.json
 
-# 4) Smoke training (layered config: defaults + profile + run)
+# 4a) Smoke training (cross-resolution mode)
 CUDA_VISIBLE_DEVICES=0 python main.py \
   --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
   --run-config configs/runs/tcga_prad_smoke.yaml \
@@ -72,7 +77,15 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   data.slide_metadata_parquet=${DATA_ROOT}/indexes/slide_metadata.parquet \
   data.anchor_catalog_manifest=${DATA_ROOT}/indexes/anchor_catalog_manifest.json
 
-# OR one-command orchestration (build index + build anchors + train)
+# 4b) Smoke training (canonical mode)
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --profile-config configs/profiles/canonical_20x_256_224.yaml \
+  --run-config configs/runs/canonical_smoke.yaml \
+  data.slide_manifest_csv=${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
+  data.slide_metadata_parquet=${DATA_ROOT}/indexes/slide_metadata.parquet \
+  data.anchor_catalog_manifest=${DATA_ROOT}/indexes/anchor_catalog_manifest.json
+
+# OR one-command orchestration (build index + build anchors + train, cross-resolution example)
 CUDA_VISIBLE_DEVICES=0 python main.py \
   --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
   --run-config configs/runs/tcga_prad_smoke.yaml \
@@ -94,6 +107,7 @@ CUDA_VISIBLE_DEVICES=0,1 python main.py \
 #   or pass --master-port to main_distributed.py.
 
 # defaults config is implicit: configs/defaults.yaml
+# mode is REQUIRED in run config via pretraining.mode (no implicit default)
 
 # Merged resolved config is saved automatically to:
 # outputs/runs/<run_id>/params-ijepa.yaml   (default)
