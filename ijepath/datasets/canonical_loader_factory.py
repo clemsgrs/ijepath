@@ -5,6 +5,10 @@ from torch.utils.data import DataLoader
 from ijepath.datasets.canonical_wsi_dataset import CanonicalWSIDataset
 from ijepath.masks.multiblock import MaskCollator
 
+OFFICIAL_IJEPA_ENC_MASK_SCALE = (0.85, 1.0)
+OFFICIAL_IJEPA_PRED_MASK_SCALE = (0.15, 0.2)
+OFFICIAL_IJEPA_ASPECT_RATIO = (0.75, 1.5)
+
 
 class CanonicalCollateWithMetadata:
     """Pickle-safe collate wrapper for canonical DataLoader workers."""
@@ -31,6 +35,9 @@ class CanonicalCollateWithMetadata:
             self._collator = MaskCollator(
                 input_size=int(self.crop_size_px),
                 patch_size=int(self.patch_size),
+                enc_mask_scale=OFFICIAL_IJEPA_ENC_MASK_SCALE,
+                pred_mask_scale=OFFICIAL_IJEPA_PRED_MASK_SCALE,
+                aspect_ratio=OFFICIAL_IJEPA_ASPECT_RATIO,
                 nenc=int(self.num_enc_masks),
                 npred=int(self.num_pred_masks),
                 min_keep=int(self.min_keep),
