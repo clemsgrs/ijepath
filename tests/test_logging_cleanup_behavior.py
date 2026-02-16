@@ -1,5 +1,6 @@
 import main as main_entry
 import io
+import json
 import torch
 import pytest
 from pathlib import Path
@@ -587,6 +588,25 @@ def test_has_opt_detects_dotlist_prefix():
 
 def test_orchestrate_pipeline_artifacts_runs_both_build_stages(monkeypatch, tmp_path: Path):
     calls: list[list[str]] = []
+    manifest_path = tmp_path / "manifest.csv"
+    profile_path = tmp_path / "profile.yaml"
+    manifest_path.write_text("slide_id,wsi_path,mask_path\ns,/tmp/wsi.tif,/tmp/mask.tif\n", encoding="utf-8")
+    profile_path.write_text(
+        "\n".join(
+            [
+                "context_mpp: 1.0",
+                "target_mpp: 0.5",
+                "context_fov_um: 512",
+                "target_fov_um: 128",
+                "targets_per_context: 4",
+                "min_tissue_fraction: 0.2",
+                "anchor_overlap_fraction: 0.5",
+                "target_margin_um: 16",
+                "spacing_tolerance: 0.05",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     class _Ok:
         returncode = 0
@@ -600,8 +620,8 @@ def test_orchestrate_pipeline_artifacts_runs_both_build_stages(monkeypatch, tmp_
     monkeypatch.setattr(main_entry.subprocess, "run", _fake_run)
 
     out = main_entry.orchestrate_pipeline_artifacts(
-        profile_config=str(tmp_path / "profile.yaml"),
-        manifest_csv=str(tmp_path / "manifest.csv"),
+        profile_config=str(profile_path),
+        manifest_csv=str(manifest_path),
         output_folder=str(tmp_path / "out"),
     )
 
@@ -611,6 +631,104 @@ def test_orchestrate_pipeline_artifacts_runs_both_build_stages(monkeypatch, tmp_
     assert out["slide_metadata_parquet"].endswith("indexes/slide_metadata.parquet")
     assert out["anchor_catalog_manifest"].endswith("indexes/anchor_catalog_manifest.json")
     assert out["output_root"].endswith("/out")
+
+
+def test_orchestrate_pipeline_artifacts_skips_both_stages_on_cache_hit(monkeypatch, tmp_path: Path):
+    calls: list[list[str]] = []
+    manifest_path = tmp_path / "manifest.csv"
+    profile_path = tmp_path / "profile.yaml"
+    output_folder = tmp_path / "out"
+    indexes_dir = output_folder / "indexes"
+    indexes_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text("slide_id,wsi_path,mask_path\ns,/tmp/wsi.tif,/tmp/mask.tif\n", encoding="utf-8")
+    profile_path.write_text(
+        "\n".join(
+            [
+                "context_mpp: 1.0",
+                "target_mpp: 0.5",
+                "context_fov_um: 512",
+                "target_fov_um: 128",
+                "targets_per_context: 4",
+                "min_tissue_fraction: 0.2",
+                "anchor_overlap_fraction: 0.5",
+                "target_margin_um: 16",
+                "spacing_tolerance: 0.05",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    slide_identity = main_entry._slide_cache_identity(manifest_path=manifest_path.resolve())
+    slide_key = main_entry._sha256_json(slide_identity)
+    profile_relevant = main_entry._profile_relevant_cache_fields(main_entry._load_profile_for_cache(profile_path.resolve()))
+    anchor_identity = main_entry._anchor_cache_identity(slide_cache_key=slide_key, profile_relevant=profile_relevant)
+    anchor_key = main_entry._sha256_json(anchor_identity)
+
+    slide_metadata = indexes_dir / "slide_metadata.parquet"
+    slide_metadata.write_text("ok", encoding="utf-8")
+    (indexes_dir / "slide_metadata.cache.json").write_text(json.dumps({"key": slide_key}), encoding="utf-8")
+
+    shard = indexes_dir / "anchors-shard.parquet"
+    shard.write_text("ok", encoding="utf-8")
+    anchor_manifest = indexes_dir / "anchor_catalog_manifest.json"
+    anchor_manifest.write_text(json.dumps({"anchor_shards": [{"path": str(shard)}]}), encoding="utf-8")
+    (indexes_dir / "anchor_catalog.cache.json").write_text(json.dumps({"key": anchor_key}), encoding="utf-8")
+
+    def _fake_run(cmd, **_kwargs):
+        calls.append(list(cmd))
+        raise AssertionError("subprocess.run should not be called on cache hit")
+
+    monkeypatch.setattr(main_entry.subprocess, "run", _fake_run)
+
+    main_entry.orchestrate_pipeline_artifacts(
+        profile_config=str(profile_path),
+        manifest_csv=str(manifest_path),
+        output_folder=str(output_folder),
+    )
+    assert calls == []
+
+
+def test_orchestrate_pipeline_artifacts_force_rebuild_ignores_cache(monkeypatch, tmp_path: Path):
+    calls: list[list[str]] = []
+    manifest_path = tmp_path / "manifest.csv"
+    profile_path = tmp_path / "profile.yaml"
+    output_folder = tmp_path / "out"
+    manifest_path.write_text("slide_id,wsi_path,mask_path\ns,/tmp/wsi.tif,/tmp/mask.tif\n", encoding="utf-8")
+    profile_path.write_text(
+        "\n".join(
+            [
+                "context_mpp: 1.0",
+                "target_mpp: 0.5",
+                "context_fov_um: 512",
+                "target_fov_um: 128",
+                "targets_per_context: 4",
+                "min_tissue_fraction: 0.2",
+                "anchor_overlap_fraction: 0.5",
+                "target_margin_um: 16",
+                "spacing_tolerance: 0.05",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class _Ok:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def _fake_run(cmd, **_kwargs):
+        calls.append(list(cmd))
+        return _Ok()
+
+    monkeypatch.setattr(main_entry.subprocess, "run", _fake_run)
+    out = main_entry.orchestrate_pipeline_artifacts(
+        profile_config=str(profile_path),
+        manifest_csv=str(manifest_path),
+        output_folder=str(output_folder),
+        force_rebuild_indexes=True,
+    )
+    assert len(calls) == 2
+    assert out["slide_metadata_parquet"].endswith("indexes/slide_metadata.parquet")
 
 
 def test_run_checked_raises_with_command_output_on_failure(monkeypatch):

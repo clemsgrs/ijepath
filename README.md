@@ -102,6 +102,10 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --manifest-csv ${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
   --output-folder ${DATA_ROOT}/outputs/full-pipeline
 
+# Index/anchor build cache behavior:
+# - default: reuse existing indexes when manifest content + relevant profile keys match
+# - force rebuild: add --force-rebuild-indexes
+
 # 5) Single-machine multi-GPU launch (2 GPUs example)
 CUDA_VISIBLE_DEVICES=0,1 python main.py \
   --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \

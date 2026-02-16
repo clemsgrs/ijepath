@@ -3,8 +3,6 @@
 # 1) anchor catalog builder (`--profile ...`)
 # 2) training config merge (`--profile-config ...`)
 
-profile_id: profile_name_here  # Unique id embedded in anchor catalog rows.
-
 # Cross-resolution geometry (single source of truth for profile settings).
 context_mpp: null  # Default in defaults.yaml: null (must be provided by profile).
 target_mpp: null  # Default in defaults.yaml: null (must be provided by profile).

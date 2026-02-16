@@ -1,4 +1,3 @@
-profile_id: ctx1p0_tgt0p5_fov512um_k4  # Identifier embedded in generated anchor catalog rows.
 context_mpp: 1.0  # Requested context spacing (microns/pixel, lower resolution).
 target_mpp: 0.5  # Requested target spacing (microns/pixel, higher resolution).
 context_fov_um: 512  # Context field-of-view width in microns.

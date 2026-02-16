@@ -26,4 +26,4 @@ def test_helper_api_lists_profile_and_run_defaults():
 
 def test_helper_api_reads_packaged_config_text():
     text = configs.read_default_config("profiles/ctx1p0_tgt0p5_fov512um_k4.yaml")
-    assert "profile_id:" in text
+    assert "context_mpp:" in text
