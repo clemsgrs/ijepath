@@ -163,6 +163,26 @@ def _attach_config_sources(
     }
 
 
+def _validate_pair(
+    *,
+    value: Any,
+    key_name: str,
+    positive_only: bool = True,
+    unit_interval: bool = False,
+) -> tuple[float, float]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"{key_name} must be a two-value list/tuple")
+    lo = float(value[0])
+    hi = float(value[1])
+    if positive_only and (lo <= 0.0 or hi <= 0.0):
+        raise ValueError(f"{key_name} values must be > 0")
+    if lo > hi:
+        raise ValueError(f"{key_name} must satisfy min <= max")
+    if unit_interval and (lo > 1.0 or hi > 1.0):
+        raise ValueError(f"{key_name} values must be <= 1")
+    return lo, hi
+
+
 def _validate_training_config(cfg: dict[str, Any]) -> None:
     if "batch_size" in cfg.get("data", {}):
         raise ValueError("Unsupported config value: data.batch_size")
@@ -242,6 +262,9 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
             ("canonical", "crop_size_px"),
             ("canonical", "transform_preset"),
             ("canonical", "mask_preset"),
+            ("canonical", "enc_mask_scale"),
+            ("canonical", "pred_mask_scale"),
+            ("canonical", "aspect_ratio"),
             ("canonical", "num_enc_masks"),
             ("canonical", "num_pred_masks"),
             ("canonical", "min_keep"),
@@ -287,6 +310,24 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
             raise ValueError("canonical.source_tile_size_px must be >= canonical.crop_size_px")
         if crop_size_px % int(patch_size) != 0:
             raise ValueError("canonical.crop_size_px must be divisible by meta.patch_size")
+        _validate_pair(
+            value=canonical_cfg["enc_mask_scale"],
+            key_name="canonical.enc_mask_scale",
+            positive_only=True,
+            unit_interval=True,
+        )
+        _validate_pair(
+            value=canonical_cfg["pred_mask_scale"],
+            key_name="canonical.pred_mask_scale",
+            positive_only=True,
+            unit_interval=True,
+        )
+        _validate_pair(
+            value=canonical_cfg["aspect_ratio"],
+            key_name="canonical.aspect_ratio",
+            positive_only=True,
+            unit_interval=False,
+        )
         if int(canonical_cfg["num_enc_masks"]) <= 0:
             raise ValueError("canonical.num_enc_masks must be > 0")
         if int(canonical_cfg["num_pred_masks"]) <= 0:

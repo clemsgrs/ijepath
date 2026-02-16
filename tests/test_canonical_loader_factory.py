@@ -32,6 +32,9 @@ def test_canonical_loader_collate_fn_is_picklable(monkeypatch):
         source_tile_size_px=256,
         crop_size_px=224,
         transform_preset="official_ijepa",
+        enc_mask_scale=(0.85, 1.0),
+        pred_mask_scale=(0.15, 0.2),
+        aspect_ratio=(0.75, 1.5),
         num_enc_masks=1,
         num_pred_masks=4,
         min_keep=16,
@@ -44,9 +47,12 @@ def test_canonical_loader_collate_fn_is_picklable(monkeypatch):
     assert len(payload) > 0
 
 
-def test_canonical_loader_uses_official_mask_collator_scales(monkeypatch):
+def test_canonical_loader_uses_configured_mask_collator_scales(monkeypatch):
     monkeypatch.setattr(clf, "CanonicalWSIDataset", _FakeDataset)
     captured = {}
+    enc_mask_scale = (0.81, 0.97)
+    pred_mask_scale = (0.13, 0.21)
+    aspect_ratio = (0.61, 1.42)
 
     class _DummyMaskCollator:
         def __init__(self, **kwargs):
@@ -73,6 +79,9 @@ def test_canonical_loader_uses_official_mask_collator_scales(monkeypatch):
         source_tile_size_px=256,
         crop_size_px=224,
         transform_preset="official_ijepa",
+        enc_mask_scale=enc_mask_scale,
+        pred_mask_scale=pred_mask_scale,
+        aspect_ratio=aspect_ratio,
         num_enc_masks=1,
         num_pred_masks=4,
         min_keep=16,
@@ -91,6 +100,6 @@ def test_canonical_loader_uses_official_mask_collator_scales(monkeypatch):
     assert len(masks_pred) == 1
 
     kwargs = captured["kwargs"]
-    assert kwargs["enc_mask_scale"] == clf.OFFICIAL_IJEPA_ENC_MASK_SCALE
-    assert kwargs["pred_mask_scale"] == clf.OFFICIAL_IJEPA_PRED_MASK_SCALE
-    assert kwargs["aspect_ratio"] == clf.OFFICIAL_IJEPA_ASPECT_RATIO
+    assert kwargs["enc_mask_scale"] == enc_mask_scale
+    assert kwargs["pred_mask_scale"] == pred_mask_scale
+    assert kwargs["aspect_ratio"] == aspect_ratio

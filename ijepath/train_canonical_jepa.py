@@ -565,6 +565,9 @@ def main(
     crop_size_px = int(canonical_cfg["crop_size_px"])
     transform_preset = str(canonical_cfg.get("transform_preset", "official_ijepa"))
     mask_preset = str(canonical_cfg.get("mask_preset", "official_ijepa_multiblock"))
+    enc_mask_scale = tuple(float(x) for x in canonical_cfg["enc_mask_scale"])
+    pred_mask_scale = tuple(float(x) for x in canonical_cfg["pred_mask_scale"])
+    aspect_ratio = tuple(float(x) for x in canonical_cfg["aspect_ratio"])
     num_enc_masks = int(canonical_cfg["num_enc_masks"])
     num_pred_masks = int(canonical_cfg["num_pred_masks"])
     min_keep = int(canonical_cfg["min_keep"])
@@ -758,6 +761,9 @@ def main(
         source_tile_size_px=source_tile_size_px,
         crop_size_px=model_input_size_px,
         transform_preset=transform_preset,
+        enc_mask_scale=enc_mask_scale,
+        pred_mask_scale=pred_mask_scale,
+        aspect_ratio=aspect_ratio,
         num_enc_masks=num_enc_masks,
         num_pred_masks=num_pred_masks,
         min_keep=min_keep,

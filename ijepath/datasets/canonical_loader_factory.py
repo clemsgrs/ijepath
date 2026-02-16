@@ -5,10 +5,6 @@ from torch.utils.data import DataLoader
 from ijepath.datasets.canonical_wsi_dataset import CanonicalWSIDataset
 from ijepath.masks.multiblock import MaskCollator
 
-OFFICIAL_IJEPA_ENC_MASK_SCALE = (0.85, 1.0)
-OFFICIAL_IJEPA_PRED_MASK_SCALE = (0.15, 0.2)
-OFFICIAL_IJEPA_ASPECT_RATIO = (0.75, 1.5)
-
 
 class CanonicalCollateWithMetadata:
     """Pickle-safe collate wrapper for canonical DataLoader workers."""
@@ -18,12 +14,18 @@ class CanonicalCollateWithMetadata:
         *,
         crop_size_px: int,
         patch_size: int,
+        enc_mask_scale: tuple[float, float],
+        pred_mask_scale: tuple[float, float],
+        aspect_ratio: tuple[float, float],
         num_enc_masks: int,
         num_pred_masks: int,
         min_keep: int,
     ) -> None:
         self.crop_size_px = int(crop_size_px)
         self.patch_size = int(patch_size)
+        self.enc_mask_scale = tuple(float(x) for x in enc_mask_scale)
+        self.pred_mask_scale = tuple(float(x) for x in pred_mask_scale)
+        self.aspect_ratio = tuple(float(x) for x in aspect_ratio)
         self.num_enc_masks = int(num_enc_masks)
         self.num_pred_masks = int(num_pred_masks)
         self.min_keep = int(min_keep)
@@ -35,9 +37,9 @@ class CanonicalCollateWithMetadata:
             self._collator = MaskCollator(
                 input_size=int(self.crop_size_px),
                 patch_size=int(self.patch_size),
-                enc_mask_scale=OFFICIAL_IJEPA_ENC_MASK_SCALE,
-                pred_mask_scale=OFFICIAL_IJEPA_PRED_MASK_SCALE,
-                aspect_ratio=OFFICIAL_IJEPA_ASPECT_RATIO,
+                enc_mask_scale=self.enc_mask_scale,
+                pred_mask_scale=self.pred_mask_scale,
+                aspect_ratio=self.aspect_ratio,
                 nenc=int(self.num_enc_masks),
                 npred=int(self.num_pred_masks),
                 min_keep=int(self.min_keep),
@@ -88,6 +90,9 @@ def make_canonical_loader(
     source_tile_size_px: int,
     crop_size_px: int,
     transform_preset: str,
+    enc_mask_scale: tuple[float, float],
+    pred_mask_scale: tuple[float, float],
+    aspect_ratio: tuple[float, float],
     num_enc_masks: int,
     num_pred_masks: int,
     min_keep: int,
@@ -132,6 +137,9 @@ def make_canonical_loader(
         "collate_fn": CanonicalCollateWithMetadata(
             crop_size_px=int(crop_size_px),
             patch_size=int(patch_size),
+            enc_mask_scale=tuple(float(x) for x in enc_mask_scale),
+            pred_mask_scale=tuple(float(x) for x in pred_mask_scale),
+            aspect_ratio=tuple(float(x) for x in aspect_ratio),
             num_enc_masks=int(num_enc_masks),
             num_pred_masks=int(num_pred_masks),
             min_keep=int(min_keep),
