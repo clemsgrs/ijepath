@@ -66,7 +66,6 @@ def _replace_opt(opts: list[str] | None, prefix: str, value: str) -> list[str]:
     return out
 
 
-_SPINNER_FRAMES = ("|", "/", "-", "\\")
 _SPINNER_POLL_INTERVAL_S = 0.2
 _NON_TTY_PROGRESS_INTERVAL_S = 10.0
 
@@ -101,28 +100,18 @@ def _run_checked(cmd: list[str]) -> None:
             capture_output=not is_tty,
         )
         start = time.monotonic()
-        spinner_index = 0
         last_non_tty_log = -_NON_TTY_PROGRESS_INTERVAL_S
 
         while not future.done():
             elapsed = time.monotonic() - start
-            frame = _SPINNER_FRAMES[spinner_index % len(_SPINNER_FRAMES)]
-            message = f"[{frame}] Running {stage} (elapsed {_format_elapsed(elapsed)})"
-
-            if is_tty:
-                print(f"\r{message}", end="", file=sys.stderr, flush=True)
-            elif elapsed - last_non_tty_log >= _NON_TTY_PROGRESS_INTERVAL_S:
+            if (not is_tty) and elapsed - last_non_tty_log >= _NON_TTY_PROGRESS_INTERVAL_S:
+                message = f"Running {stage} (elapsed {_format_elapsed(elapsed)})"
                 print(message, file=sys.stderr, flush=True)
                 last_non_tty_log = elapsed
 
-            spinner_index += 1
             time.sleep(_SPINNER_POLL_INTERVAL_S)
 
         completed = future.result()
-        if is_tty:
-            elapsed = time.monotonic() - start
-            done = f"[done] Finished {stage} in {_format_elapsed(elapsed)}"
-            print(f"\r{done}{' ' * 16}", file=sys.stderr, flush=True)
 
     if completed.returncode != 0:
         raise SystemExit(

@@ -652,6 +652,25 @@ def test_run_checked_streams_subprocess_output_when_stderr_is_tty(monkeypatch):
     assert kwargs_seen.get("stderr") is None
 
 
+def test_run_checked_does_not_emit_parent_progress_in_tty_mode(monkeypatch):
+    class _Ok:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    class _TTYBuffer(io.StringIO):
+        def isatty(self):
+            return True
+
+    stderr_buf = _TTYBuffer()
+    monkeypatch.setattr(main_entry.sys, "stderr", stderr_buf)
+    monkeypatch.setattr(main_entry.subprocess, "run", lambda *_args, **_kwargs: _Ok())
+
+    main_entry._run_checked(["echo", "hello"])
+
+    assert stderr_buf.getvalue() == ""
+
+
 def test_run_checked_captures_subprocess_output_when_stderr_is_not_tty(monkeypatch):
     kwargs_seen: dict[str, object] = {}
 
