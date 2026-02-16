@@ -9,6 +9,8 @@ def extract_teacher_features_single_process(
     teacher,
     loader: torch.utils.data.DataLoader,
     device: torch.device,
+    *,
+    enforce_square_inputs: bool = False,
 ) -> np.ndarray:
     """Extract L2-normalized mean-pooled token features from the teacher encoder."""
     if hasattr(teacher, "module"):
@@ -20,6 +22,16 @@ def extract_teacher_features_single_process(
     write_offset = 0
 
     for idx, image, _label in loader:
+        if enforce_square_inputs:
+            if image.ndim != 4:
+                raise ValueError("Feature extraction expects image batches shaped [B, C, H, W].")
+            height = int(image.shape[-2])
+            width = int(image.shape[-1])
+            if height != width:
+                raise ValueError(
+                    "PathoROB square-input policy violation: transformed batch has shape "
+                    f"HxW={height}x{width}. Set a square crop (e.g. transforms.crop_size=256)."
+                )
         image = image.to(device, non_blocking=True)
         tokens = teacher(image, masks=None)
         pooled = tokens.mean(dim=1)
