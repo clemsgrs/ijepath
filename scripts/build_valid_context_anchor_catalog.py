@@ -24,6 +24,36 @@ from ijepath.datasets.wsi_readers.wholeslidedata_reader_adapter import (
 from ijepath.utils.parquet import require_pyarrow
 
 
+def _format_id_number(value: float) -> str:
+    value = float(value)
+    if value.is_integer():
+        return str(int(value))
+    return format(value, "g").replace(".", "p")
+
+
+def derive_profile_id(
+    *,
+    context_mpp: float,
+    target_mpp: float,
+    context_fov_um: float,
+    target_fov_um: float,
+) -> str:
+    context = float(context_mpp)
+    target = float(target_mpp)
+    context_fov = float(context_fov_um)
+    target_fov = float(target_fov_um)
+    if abs(context - target) < 1e-12:
+        return (
+            f"canonical_{_format_id_number(context)}mpp_"
+            f"{_format_id_number(context_fov)}_{_format_id_number(target_fov)}"
+        )
+    return (
+        f"crossres_{_format_id_number(context)}mpp_"
+        f"{_format_id_number(target)}mpp_"
+        f"{_format_id_number(context_fov)}_{_format_id_number(target_fov)}"
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a profile-specific context-anchor catalog (Parquet shards + manifest).")
     parser.add_argument("--slide-index", required=True, type=str, help="Slide metadata Parquet path")
@@ -46,6 +76,8 @@ def load_slide_index(path: Path) -> list[dict]:
 
 def load_profile(path: Path):
     profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(profile, dict):
+        raise ValueError(f"Profile must be a mapping: {path}")
     if "anchor_stride_fraction" in profile:
         raise ValueError(
             "Unsupported profile key: anchor_stride_fraction "
@@ -53,7 +85,6 @@ def load_profile(path: Path):
         )
 
     required_keys = [
-        "profile_id",
         "context_mpp",
         "target_mpp",
         "context_fov_um",
@@ -74,6 +105,13 @@ def load_profile(path: Path):
     stride_fraction = 1.0 - float(overlap)
     if float(stride_fraction) <= 0.0:
         raise ValueError("Derived anchor stride fraction must be > 0")
+
+    profile["profile_id"] = derive_profile_id(
+        context_mpp=float(profile["context_mpp"]),
+        target_mpp=float(profile["target_mpp"]),
+        context_fov_um=float(profile["context_fov_um"]),
+        target_fov_um=float(profile["target_fov_um"]),
+    )
     return profile
 
 

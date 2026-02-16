@@ -96,7 +96,7 @@ def test_end_to_end_fixture_smoke(tmp_path: Path):
 
     manifest = json.loads(anchor_catalog_manifest.read_text(encoding="utf-8"))
     assert int(manifest["total_anchors"]) > 0
-    assert str(manifest["profile"]["profile_id"]) == "ctx1p0_tgt0p5_fov512um_k4"
+    assert str(manifest["profile"]["profile_id"]) == "crossres_1mpp_0p5mpp_512_128"
 
     write_tag = "test-fixture-smoke"
     _run(

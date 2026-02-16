@@ -63,7 +63,6 @@ def test_pathology_valid_context_anchor_catalog_builder_smoke(tmp_path):
     profile_yaml.write_text(
         "\n".join(
             [
-                "profile_id: ctx1p0_tgt0p5_fov512um_k4",
                 "context_mpp: 1.0",
                 "target_mpp: 0.5",
                 "context_fov_um: 512.0",
@@ -102,7 +101,7 @@ def test_pathology_valid_context_anchor_catalog_builder_smoke(tmp_path):
 
     manifest = json.loads(anchor_manifest.read_text(encoding="utf-8"))
     assert int(manifest["total_anchors"]) > 0, "Expected at least one valid anchor"
-    assert manifest["profile"]["profile_id"] == "ctx1p0_tgt0p5_fov512um_k4"
+    assert manifest["profile"]["profile_id"] == "crossres_1mpp_0p5mpp_512_128"
 
     import pyarrow.parquet as pq
 
@@ -110,7 +109,7 @@ def test_pathology_valid_context_anchor_catalog_builder_smoke(tmp_path):
     rows = pq.read_table(str(first_shard)).to_pylist()
     row = dict(rows[0])
     assert row["slide_id"] == "TCGA-HC-8257"
-    assert row["profile_id"] == "ctx1p0_tgt0p5_fov512um_k4"
+    assert row["profile_id"] == "crossres_1mpp_0p5mpp_512_128"
     assert float(row["context_mpp"]) == 1.0
     assert float(row["target_mpp"]) == 0.5
     assert float(row["tissue_fraction"]) >= 0.2
@@ -122,7 +121,6 @@ def test_anchor_builder_rejects_legacy_anchor_stride_key(tmp_path: Path):
     profile_yaml.write_text(
         "\n".join(
             [
-                "profile_id: legacy",
                 "context_mpp: 1.0",
                 "target_mpp: 0.5",
                 "context_fov_um: 512.0",
@@ -140,3 +138,52 @@ def test_anchor_builder_rejects_legacy_anchor_stride_key(tmp_path: Path):
 
     with pytest.raises(ValueError, match="anchor_stride_fraction"):
         _MOD.load_profile(profile_yaml)
+
+
+def test_load_profile_derives_canonical_profile_id(tmp_path: Path):
+    profile_yaml = tmp_path / "profile_canonical.yaml"
+    profile_yaml.write_text(
+        "\n".join(
+            [
+                "context_mpp: 0.5",
+                "target_mpp: 0.5",
+                "context_fov_um: 256",
+                "target_fov_um: 128",
+                "targets_per_context: 4",
+                "min_tissue_fraction: 0.2",
+                "anchor_overlap_fraction: 0.5",
+                "target_margin_um: 16.0",
+                "spacing_tolerance: 0.05",
+                "seed: 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = _MOD.load_profile(profile_yaml)
+    assert loaded["profile_id"] == "canonical_0p5mpp_256_128"
+
+
+def test_load_profile_ignores_explicit_profile_id(tmp_path: Path):
+    profile_yaml = tmp_path / "profile_with_id.yaml"
+    profile_yaml.write_text(
+        "\n".join(
+            [
+                "profile_id: custom_name_that_should_be_ignored",
+                "context_mpp: 1.0",
+                "target_mpp: 0.5",
+                "context_fov_um: 512",
+                "target_fov_um: 128",
+                "targets_per_context: 4",
+                "min_tissue_fraction: 0.2",
+                "anchor_overlap_fraction: 0.5",
+                "target_margin_um: 16.0",
+                "spacing_tolerance: 0.05",
+                "seed: 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = _MOD.load_profile(profile_yaml)
+    assert loaded["profile_id"] == "crossres_1mpp_0p5mpp_512_128"

@@ -1,0 +1,10 @@
+context_mpp: 0.5
+target_mpp: 0.5
+context_fov_um: 256
+target_fov_um: 64
+targets_per_context: 3
+min_tissue_fraction: 0.6
+anchor_overlap_fraction: 0.5
+target_margin_um: 12
+spacing_tolerance: 0.05
+seed: 7

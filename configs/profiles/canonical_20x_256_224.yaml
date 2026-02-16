@@ -1,4 +1,3 @@
-profile_id: canonical_20x_256_224
 # Anchor indexing geometry (shared artifact contract with other modes).
 context_mpp: 0.5
 target_mpp: 0.5
