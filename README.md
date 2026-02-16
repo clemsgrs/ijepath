@@ -179,6 +179,8 @@ Async tuning behavior and key knobs:
 - `tuning.execution.poll_every_steps`: poll cadence in optimizer steps. `auto` (default) resolves to `round(tune_every / (global_batch_size * 20))`.
 - `tuning.execution.keep_last_n_snapshots`: limits on-disk teacher snapshot retention.
 - `tuning.plugins[*].feature_num_workers`, `feature_persistent_workers`, `feature_prefetch_factor`: feature extraction loader throughput controls.
+- `tuning.plugins[*].transforms.resize` + `transforms.crop_size`: evaluation image sizing. For canonical JEPA PathoROB Camelyon, use square `256x256` (`resize: 256`, `crop_size: 256`) so teacher patch grids are square.
+- `tuning.plugins[*].enforce_square_inputs`: optional fail-fast guard that raises if transformed eval batches are not square.
 - `tuning.plugins[*].ri/apd/clustering.every_n_evals`: cadence controls for heavy metrics (counted in tune runs).
 - Tune metadata logs use `tune/tune_index` and `tune/tune_images_seen`.
 - `training.log_every`: cadence for `train/*` W&B logs in images seen (plus a final flush at run end).
@@ -186,6 +188,10 @@ Async tuning behavior and key knobs:
 - `data.anchor_stream_batch_size`: parquet decode chunk size for anchor streaming (`2048` default). Increasing to `4096`/`8192` can reduce periodic rollover stalls at higher memory cost.
 - `logging.performance_debug.*`: optional rolling step timing diagnostics for spotting data-wait spikes and intermittent loader stalls.
 - Tune metrics log with `images_seen` as their W&B step metric so tuning curves can be plotted directly on image budget.
+
+Canonical JEPA note:
+- Canonical ViT positional embeddings now interpolate correctly for square sizes different from training crop (for example `224 -> 256`).
+- If strict train/eval parity is needed, set PathoROB transforms to `crop_size: 224` explicitly for that run.
 
 Checkpoint semantics:
 - Always keeps `<write_tag>-latest.pth.tar`

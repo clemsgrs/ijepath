@@ -58,9 +58,10 @@ tuning:
       feature_num_workers: ${data.num_workers}
       feature_persistent_workers: true
       feature_prefetch_factor: 4
+      enforce_square_inputs: true
       transforms:
         resize: 256
-        crop_size: null
+        crop_size: 256
         normalize: imagenet
       datasets:
         camelyon:

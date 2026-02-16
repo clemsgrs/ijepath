@@ -80,6 +80,7 @@ class PathoROBPlugin(BenchmarkPlugin):
         self._manifest_cache: dict[str, pd.DataFrame] = {}
         self._apd_split_cache: dict[str, list[pd.DataFrame]] = {}
         self._dataset_cache: dict[str, dict[str, object]] = {}
+        self.enforce_square_inputs = bool(self.cfg.get("enforce_square_inputs", False))
 
     def should_run(self, images_seen: int, tune_index: int) -> bool:
         tune_every_images = self.cfg.get("tune_every_images", None)
@@ -124,6 +125,7 @@ class PathoROBPlugin(BenchmarkPlugin):
             teacher=teacher_backbone,
             loader=loader,
             device=self.device,
+            enforce_square_inputs=bool(self.enforce_square_inputs),
         )
 
     def _dataset_context(self, dataset_name: str, manifest_df: pd.DataFrame) -> dict[str, object]:
