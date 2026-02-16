@@ -6,6 +6,49 @@ from ijepath.datasets.canonical_wsi_dataset import CanonicalWSIDataset
 from ijepath.masks.multiblock import MaskCollator
 
 
+class CanonicalCollateWithMetadata:
+    """Pickle-safe collate wrapper for canonical DataLoader workers."""
+
+    def __init__(
+        self,
+        *,
+        crop_size_px: int,
+        patch_size: int,
+        num_enc_masks: int,
+        num_pred_masks: int,
+        min_keep: int,
+    ) -> None:
+        self.crop_size_px = int(crop_size_px)
+        self.patch_size = int(patch_size)
+        self.num_enc_masks = int(num_enc_masks)
+        self.num_pred_masks = int(num_pred_masks)
+        self.min_keep = int(min_keep)
+        self._collator: MaskCollator | None = None
+
+    def _get_collator(self) -> MaskCollator:
+        if self._collator is None:
+            # Build collator lazily in each worker process (spawn-safe).
+            self._collator = MaskCollator(
+                input_size=int(self.crop_size_px),
+                patch_size=int(self.patch_size),
+                nenc=int(self.num_enc_masks),
+                npred=int(self.num_pred_masks),
+                min_keep=int(self.min_keep),
+            )
+        return self._collator
+
+    def __call__(self, batch: list[dict]):
+        collator = self._get_collator()
+        images = [sample["image"] for sample in batch]
+        metadata = [dict(sample.get("sample_metadata", {})) for sample in batch]
+        collated_images, masks_enc, masks_pred = collator(images)
+        collated_batch = {
+            "image": collated_images,
+            "sample_metadata": metadata,
+        }
+        return collated_batch, masks_enc, masks_pred
+
+
 def validate_canonical_size_alignment(
     *,
     dataset: CanonicalWSIDataset,
@@ -71,24 +114,6 @@ def make_canonical_loader(
         anchor_stream_batch_size=anchor_stream_batch_size,
     )
 
-    collator = MaskCollator(
-        input_size=int(crop_size_px),
-        patch_size=int(patch_size),
-        nenc=int(num_enc_masks),
-        npred=int(num_pred_masks),
-        min_keep=int(min_keep),
-    )
-
-    def _collate_with_metadata(batch: list[dict]):
-        images = [sample["image"] for sample in batch]
-        metadata = [dict(sample.get("sample_metadata", {})) for sample in batch]
-        collated_images, masks_enc, masks_pred = collator(images)
-        collated_batch = {
-            "image": collated_images,
-            "sample_metadata": metadata,
-        }
-        return collated_batch, masks_enc, masks_pred
-
     validate_canonical_size_alignment(
         dataset=dataset,
         crop_size_px=int(crop_size_px),
@@ -97,7 +122,13 @@ def make_canonical_loader(
 
     loader_kwargs = {
         "dataset": dataset,
-        "collate_fn": _collate_with_metadata,
+        "collate_fn": CanonicalCollateWithMetadata(
+            crop_size_px=int(crop_size_px),
+            patch_size=int(patch_size),
+            num_enc_masks=int(num_enc_masks),
+            num_pred_masks=int(num_pred_masks),
+            min_keep=int(min_keep),
+        ),
         "batch_size": int(batch_size),
         "drop_last": bool(drop_last),
         "pin_memory": bool(pin_mem),
