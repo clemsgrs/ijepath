@@ -86,27 +86,6 @@ def resolve_step_log_every_images(logging_cfg: dict, total_images_budget: int) -
     raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
 
 
-def resolve_step_log_every_images_with_step_frequency(
-    *,
-    logging_cfg: dict,
-    total_images_budget: int,
-    global_batch_size: int,
-) -> int:
-    step_log_every_images = resolve_step_log_every_images(
-        logging_cfg=logging_cfg,
-        total_images_budget=total_images_budget,
-    )
-    if int(step_log_every_images) > 0:
-        return int(step_log_every_images)
-
-    log_freq_steps = int(logging_cfg.get("log_freq_steps", 0))
-    if log_freq_steps <= 0:
-        return 0
-    if int(global_batch_size) <= 0:
-        raise ValueError("global_batch_size must be > 0")
-    return int(log_freq_steps) * int(global_batch_size)
-
-
 def resolve_use_bfloat16(requested_use_bfloat16: bool, cuda_available: bool) -> bool:
     return bool(requested_use_bfloat16 and cuda_available)
 
@@ -671,10 +650,9 @@ def main(
     setup_logging(output=folder, level=logger_level)
 
     global_batch_size = batch_size_per_gpu * world_size
-    step_log_every_images = resolve_step_log_every_images_with_step_frequency(
-        logging_cfg=args.get("logging", {}),
+    step_log_every_images = resolve_step_log_every_images(
+        args.get("logging", {}),
         total_images_budget=int(total_images_budget),
-        global_batch_size=int(global_batch_size),
     )
     expected_step_log_events = (
         int(math.ceil(float(total_images_budget) / float(step_log_every_images)))
@@ -724,7 +702,6 @@ def main(
     logger.info(
         "Step logging cadence:\n"
         f" - logging.step_log_every_images(raw)={step_log_every_images_raw!r}\n"
-        f" - logging.log_freq_steps={int(args.get('logging', {}).get('log_freq_steps', 0))}\n"
         f" - logging.step_log_every_images(resolved)={step_log_every_images:,}\n"
         f" - expected_step_log_events={expected_step_log_events:,}"
     )

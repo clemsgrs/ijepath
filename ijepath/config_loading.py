@@ -206,6 +206,8 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         raise ValueError("Unsupported config value: logging.checkpoint_every_images")
     if "step_log_every_iters" in cfg.get("logging", {}):
         raise ValueError("Unsupported config value: logging.step_log_every_iters")
+    if "log_freq_steps" in cfg.get("logging", {}):
+        raise ValueError("Unsupported config value: logging.log_freq_steps")
     if "folder" in cfg.get("logging", {}):
         raise ValueError("Unsupported config value: logging.folder (use output.root)")
     if "log_every_images" in cfg.get("wandb", {}):
@@ -385,12 +387,6 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
             raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
     else:
         raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
-
-    log_freq_steps = cfg.get("logging", {}).get("log_freq_steps", 0)
-    if isinstance(log_freq_steps, bool):
-        raise ValueError("logging.log_freq_steps must be int>=0")
-    if int(log_freq_steps) < 0:
-        raise ValueError("logging.log_freq_steps must be int>=0")
 
     tune_every = cfg.get("tuning", {}).get("tune_every", None)
     if tune_every is not None and int(tune_every) <= 0:

@@ -204,3 +204,13 @@ def test_optimization_warmup_epochs_is_rejected(tmp_path: Path):
 
     with pytest.raises(ValueError, match="Unsupported config value: optimization.warmup_epochs"):
         load_training_config(config_file=str(cfg_path))
+
+
+def test_logging_log_freq_steps_is_rejected(tmp_path: Path):
+    cfg = _base_cfg()
+    cfg["logging"] = {"log_freq_steps": 10}
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="Unsupported config value: logging.log_freq_steps"):
+        load_training_config(config_file=str(cfg_path))

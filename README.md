@@ -129,8 +129,6 @@ CUDA_VISIBLE_DEVICES=0,1 python main.py \
 # - logging.step_log_every_images controls step-log cadence:
 #   - 10000 => log every 10k images
 #   - 0.1 => log every 10% of optimization.total_images_budget
-#   - if step_log_every_images resolves to 0 and logging.log_freq_steps>0,
-#     cadence is logging.log_freq_steps * global_batch_size
 #   - 0 disables cadence logging (NaN/Inf still logs immediately)
 #   - percent strings like "10%" are not supported
 ```

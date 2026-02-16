@@ -22,5 +22,4 @@ optimization:
   ema: [0.996, 1.0]
 
 logging:
-  log_freq_steps: 10
   step_log_every_images: 0

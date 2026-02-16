@@ -37,7 +37,7 @@ def test_canonical_vith14_parity_smoke_config_resolves_expected_values():
     assert int(cfg["canonical"]["min_keep"]) == 10
     assert int(cfg["canonical"]["num_pred_masks"]) == 4
     assert float(cfg["optimization"]["warmup"]) == pytest.approx(40.0 / 300.0)
-    assert int(cfg["logging"]["log_freq_steps"]) == 10
+    assert "log_freq_steps" not in cfg["logging"]
 
 
 def test_canonical_vith14_parity_run_uses_absolute_budget_and_warmup_ratio():

@@ -126,7 +126,6 @@ output:
 
 logging:
   write_tag: jepa
-  log_freq_steps: 0  # Optional step-based cadence (upstream-style). 0 disables.
   step_log_every_images: 0  # int images or float fraction in [0,1] (e.g. 10000 or 0.1); 0 disables cadence logs; "10%" is invalid.
   performance_debug:
     enable: false  # Opt-in step timing breakdown logs (data wait, H2D transfer, compute, tune poll, overhead).

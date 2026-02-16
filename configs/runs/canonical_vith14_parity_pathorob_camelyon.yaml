@@ -103,7 +103,6 @@ output:
 
 logging:
   write_tag: jepa-canonical-vith14-parity
-  log_freq_steps: 10
   step_log_every_images: 0
 
 wandb:
