@@ -92,9 +92,6 @@ def main() -> int:
     print(f"Loading CAMELYON manifest: {args.manifest_csv}")
     df = pd.read_csv(args.manifest_csv)
     ensure_required_columns(df, source=str(args.manifest_csv))
-    if "sample_id" not in df.columns:
-        df = df.copy()
-        df["sample_id"] = [f"camelyon_{i:09d}" for i in range(len(df))]
 
     levels = _parse_levels(args.correlation_levels)
     if args.mode == "custom" and not levels:

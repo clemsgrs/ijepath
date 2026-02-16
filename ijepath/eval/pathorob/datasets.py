@@ -7,7 +7,7 @@ from typing import Optional, Sequence
 import numpy as np
 import pandas as pd
 
-REQUIRED_COLUMNS = ("image_path", "label", "medical_center", "slide_id")
+REQUIRED_COLUMNS = ("sample_id", "image_path", "label", "medical_center", "slide_id")
 
 
 @dataclass
@@ -37,10 +37,9 @@ def load_manifest(csv_path: str, dataset_name: str) -> pd.DataFrame:
     ensure_required_columns(df, f"manifest {csv_path}")
 
     out = df.copy()
-    if "sample_id" not in out.columns:
-        out["sample_id"] = [f"{dataset_name}_{i:09d}" for i in range(len(out))]
 
     out["dataset"] = str(dataset_name)
+    out["sample_id"] = out["sample_id"].map(_normalize_str)
     out["label"] = out["label"].map(_normalize_str)
     out["medical_center"] = out["medical_center"].map(_normalize_str)
     out["slide_id"] = out["slide_id"].map(_normalize_str)
