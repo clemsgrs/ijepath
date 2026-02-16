@@ -1,0 +1,24 @@
+pretraining:
+  mode: canonical
+
+meta:
+  architecture: vit_huge
+  patch_size: 14
+  pred_depth: 12
+  pred_emb_dim: 384
+  use_bfloat16: true
+
+optimization:
+  total_images_budget: 10
+  ipe_scale: 1.0
+  warmup: 0.1333333333
+  start_lr: 0.0002
+  lr: 0.001
+  final_lr: 0.000001
+  weight_decay: 0.04
+  final_weight_decay: 0.4
+  ema: [0.996, 1.0]
+
+logging:
+  log_freq_steps: 10
+  step_log_every_images: 0

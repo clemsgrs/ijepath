@@ -48,6 +48,13 @@ canonical:
   crop_size_px: 224
   transform_preset: official_ijepa
   mask_preset: official_ijepa_multiblock
+  crop_scale: [0.3, 1.0]
+  use_horizontal_flip: true
+  horizontal_flip_prob: 0.5
+  use_color_distortion: false
+  color_jitter_strength: 0.0
+  use_gaussian_blur: false
+  allow_overlap: false
   enc_mask_scale: [0.85, 1.0]
   pred_mask_scale: [0.15, 0.2]
   aspect_ratio: [0.75, 1.5]
@@ -72,6 +79,8 @@ mask:
 optimization:
   ema: [0.996, 1.0]  # EMA momentum schedule [start, end] over schedule horizon.
   total_images_budget: null  # Required image budget (global images seen).
+  epochs_equivalent: null  # Optional epoch-equivalent metadata (for parity logging/translation).
+  warmup_epochs: null  # Optional warmup in epoch units (compared against optimization.warmup).
   final_lr: 1.0e-06
   final_weight_decay: 0.1
   ipe_scale: 1.0  # Schedule horizon multiplier: max(total_steps, int(ipe_scale * total_steps)).
@@ -112,6 +121,7 @@ output:
 
 logging:
   write_tag: jepa-run
+  log_freq_steps: 0  # Optional step cadence alias; used only if step_log_every_images resolves to 0.
   step_log_every_images: 0  # int images or float fraction in [0,1] (e.g. 10000 or 0.1); 0 disables cadence logs; "10%" is invalid.
 
 wandb:

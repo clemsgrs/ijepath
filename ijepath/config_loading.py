@@ -294,6 +294,13 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         raise ValueError("Missing required config value: optimization.total_images_budget")
     if int(total_images_budget) <= 0:
         raise ValueError("optimization.total_images_budget must be > 0")
+    optimization_cfg = dict(cfg.get("optimization", {}) or {})
+    epochs_equivalent = optimization_cfg.get("epochs_equivalent", None)
+    if epochs_equivalent is not None and float(epochs_equivalent) <= 0.0:
+        raise ValueError("optimization.epochs_equivalent must be > 0")
+    warmup_epochs = optimization_cfg.get("warmup_epochs", None)
+    if warmup_epochs is not None and float(warmup_epochs) <= 0.0:
+        raise ValueError("optimization.warmup_epochs must be > 0")
 
     if pretraining_mode == "canonical":
         canonical_cfg = dict(cfg.get("canonical", {}) or {})
@@ -328,6 +335,34 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
             positive_only=True,
             unit_interval=False,
         )
+        crop_scale = canonical_cfg.get("crop_scale", None)
+        if crop_scale is not None:
+            _validate_pair(
+                value=crop_scale,
+                key_name="canonical.crop_scale",
+                positive_only=True,
+                unit_interval=True,
+            )
+        use_horizontal_flip = canonical_cfg.get("use_horizontal_flip", None)
+        if use_horizontal_flip is not None and not isinstance(use_horizontal_flip, bool):
+            raise ValueError("canonical.use_horizontal_flip must be a boolean")
+        horizontal_flip_prob = canonical_cfg.get("horizontal_flip_prob", None)
+        if horizontal_flip_prob is not None:
+            prob = float(horizontal_flip_prob)
+            if prob < 0.0 or prob > 1.0:
+                raise ValueError("canonical.horizontal_flip_prob must be in [0, 1]")
+        use_color_distortion = canonical_cfg.get("use_color_distortion", None)
+        if use_color_distortion is not None and not isinstance(use_color_distortion, bool):
+            raise ValueError("canonical.use_color_distortion must be a boolean")
+        color_jitter_strength = canonical_cfg.get("color_jitter_strength", None)
+        if color_jitter_strength is not None and float(color_jitter_strength) < 0.0:
+            raise ValueError("canonical.color_jitter_strength must be >= 0")
+        use_gaussian_blur = canonical_cfg.get("use_gaussian_blur", None)
+        if use_gaussian_blur is not None and not isinstance(use_gaussian_blur, bool):
+            raise ValueError("canonical.use_gaussian_blur must be a boolean")
+        allow_overlap = canonical_cfg.get("allow_overlap", None)
+        if allow_overlap is not None and not isinstance(allow_overlap, bool):
+            raise ValueError("canonical.allow_overlap must be a boolean")
         if int(canonical_cfg["num_enc_masks"]) <= 0:
             raise ValueError("canonical.num_enc_masks must be > 0")
         if int(canonical_cfg["num_pred_masks"]) <= 0:
@@ -353,6 +388,12 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
             raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
     else:
         raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
+
+    log_freq_steps = cfg.get("logging", {}).get("log_freq_steps", 0)
+    if isinstance(log_freq_steps, bool):
+        raise ValueError("logging.log_freq_steps must be int>=0")
+    if int(log_freq_steps) < 0:
+        raise ValueError("logging.log_freq_steps must be int>=0")
 
     tune_every = cfg.get("tuning", {}).get("tune_every", None)
     if tune_every is not None and int(tune_every) <= 0:

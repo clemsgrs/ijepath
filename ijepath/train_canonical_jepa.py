@@ -86,6 +86,107 @@ def resolve_step_log_every_images(logging_cfg: dict, total_images_budget: int) -
     raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
 
 
+def resolve_step_log_every_images_with_step_frequency(
+    *,
+    logging_cfg: dict,
+    total_images_budget: int,
+    global_batch_size: int,
+) -> int:
+    step_log_every_images = resolve_step_log_every_images(
+        logging_cfg=logging_cfg,
+        total_images_budget=total_images_budget,
+    )
+    if int(step_log_every_images) > 0:
+        return int(step_log_every_images)
+
+    log_freq_steps = int(logging_cfg.get("log_freq_steps", 0))
+    if log_freq_steps <= 0:
+        return 0
+    if int(global_batch_size) <= 0:
+        raise ValueError("global_batch_size must be > 0")
+    return int(log_freq_steps) * int(global_batch_size)
+
+
+def build_epoch_equivalent_schedule_summary(
+    *,
+    optimization_cfg: dict,
+    anchor_count: int,
+) -> dict[str, float | int | bool | None]:
+    if int(anchor_count) <= 0:
+        raise ValueError("anchor_count must be > 0")
+    total_images_budget = resolve_total_images_budget(optimization_cfg)
+    warmup_fraction = float(optimization_cfg.get("warmup", 0.0))
+    if warmup_fraction < 0.0:
+        raise ValueError("optimization.warmup must be >= 0")
+
+    implied_epochs_from_budget = float(total_images_budget) / float(int(anchor_count))
+    epochs_equivalent_raw = optimization_cfg.get("epochs_equivalent", None)
+    warmup_epochs_raw = optimization_cfg.get("warmup_epochs", None)
+
+    epochs_equivalent = None
+    recommended_total_images_budget = None
+    if epochs_equivalent_raw is not None:
+        epochs_equivalent = float(epochs_equivalent_raw)
+        if epochs_equivalent <= 0.0:
+            raise ValueError("optimization.epochs_equivalent must be > 0")
+        recommended_total_images_budget = int(
+            round(float(epochs_equivalent) * float(int(anchor_count)))
+        )
+
+    warmup_epochs = None
+    recommended_warmup_fraction = None
+    if warmup_epochs_raw is not None:
+        warmup_epochs = float(warmup_epochs_raw)
+        if warmup_epochs <= 0.0:
+            raise ValueError("optimization.warmup_epochs must be > 0")
+        warmup_epoch_base = (
+            float(epochs_equivalent)
+            if epochs_equivalent is not None
+            else float(implied_epochs_from_budget)
+        )
+        if warmup_epoch_base <= 0.0:
+            raise ValueError("warmup epoch base must be > 0")
+        recommended_warmup_fraction = float(warmup_epochs) / float(warmup_epoch_base)
+
+    warmup_fraction_matches_recommendation = None
+    if recommended_warmup_fraction is not None:
+        warmup_fraction_matches_recommendation = bool(
+            math.isclose(
+                float(warmup_fraction),
+                float(recommended_warmup_fraction),
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+        )
+
+    total_images_budget_matches_recommendation = None
+    if recommended_total_images_budget is not None:
+        total_images_budget_matches_recommendation = bool(
+            int(total_images_budget) == int(recommended_total_images_budget)
+        )
+
+    return {
+        "anchor_count": int(anchor_count),
+        "total_images_budget": int(total_images_budget),
+        "implied_epochs_from_budget": float(implied_epochs_from_budget),
+        "warmup_fraction": float(warmup_fraction),
+        "epochs_equivalent": None if epochs_equivalent is None else float(epochs_equivalent),
+        "warmup_epochs": None if warmup_epochs is None else float(warmup_epochs),
+        "recommended_total_images_budget": (
+            None
+            if recommended_total_images_budget is None
+            else int(recommended_total_images_budget)
+        ),
+        "recommended_warmup_fraction": (
+            None
+            if recommended_warmup_fraction is None
+            else float(recommended_warmup_fraction)
+        ),
+        "total_images_budget_matches_recommendation": total_images_budget_matches_recommendation,
+        "warmup_fraction_matches_recommendation": warmup_fraction_matches_recommendation,
+    }
+
+
 def resolve_use_bfloat16(requested_use_bfloat16: bool, cuda_available: bool) -> bool:
     return bool(requested_use_bfloat16 and cuda_available)
 
@@ -565,6 +666,13 @@ def main(
     crop_size_px = int(canonical_cfg["crop_size_px"])
     transform_preset = str(canonical_cfg.get("transform_preset", "official_ijepa"))
     mask_preset = str(canonical_cfg.get("mask_preset", "official_ijepa_multiblock"))
+    crop_scale = tuple(float(x) for x in canonical_cfg.get("crop_scale", (0.3, 1.0)))
+    use_horizontal_flip = bool(canonical_cfg.get("use_horizontal_flip", True))
+    horizontal_flip_prob = float(canonical_cfg.get("horizontal_flip_prob", 0.5))
+    use_color_distortion = bool(canonical_cfg.get("use_color_distortion", False))
+    color_jitter_strength = float(canonical_cfg.get("color_jitter_strength", 0.0))
+    use_gaussian_blur = bool(canonical_cfg.get("use_gaussian_blur", False))
+    allow_overlap = bool(canonical_cfg.get("allow_overlap", False))
     enc_mask_scale = tuple(float(x) for x in canonical_cfg["enc_mask_scale"])
     pred_mask_scale = tuple(float(x) for x in canonical_cfg["pred_mask_scale"])
     aspect_ratio = tuple(float(x) for x in canonical_cfg["aspect_ratio"])
@@ -594,15 +702,6 @@ def main(
     step_log_every_images_raw = args["logging"].get(
         "step_log_every_images",
         default_step_log_every_images,
-    )
-    step_log_every_images = resolve_step_log_every_images(
-        args["logging"],
-        total_images_budget=int(total_images_budget),
-    )
-    expected_step_log_events = (
-        int(math.ceil(float(total_images_budget) / float(step_log_every_images)))
-        if step_log_every_images > 0
-        else 0
     )
     training_cfg = dict(args.get("training", {}) or {})
     training_save_every = resolve_training_save_every(training_cfg)
@@ -652,6 +751,16 @@ def main(
     setup_logging(output=folder, level=logger_level)
 
     global_batch_size = batch_size_per_gpu * world_size
+    step_log_every_images = resolve_step_log_every_images_with_step_frequency(
+        logging_cfg=args.get("logging", {}),
+        total_images_budget=int(total_images_budget),
+        global_batch_size=int(global_batch_size),
+    )
+    expected_step_log_events = (
+        int(math.ceil(float(total_images_budget) / float(step_log_every_images)))
+        if step_log_every_images > 0
+        else 0
+    )
     total_steps = compute_total_steps(
         total_images_budget=total_images_budget,
         global_batch_size=global_batch_size,
@@ -695,6 +804,7 @@ def main(
     logger.info(
         "Step logging cadence:\n"
         f" - logging.step_log_every_images(raw)={step_log_every_images_raw!r}\n"
+        f" - logging.log_freq_steps={int(args.get('logging', {}).get('log_freq_steps', 0))}\n"
         f" - logging.step_log_every_images(resolved)={step_log_every_images:,}\n"
         f" - expected_step_log_events={expected_step_log_events:,}"
     )
@@ -761,12 +871,19 @@ def main(
         source_tile_size_px=source_tile_size_px,
         crop_size_px=model_input_size_px,
         transform_preset=transform_preset,
+        crop_scale=crop_scale,
+        use_horizontal_flip=use_horizontal_flip,
+        horizontal_flip_prob=horizontal_flip_prob,
+        use_color_distortion=use_color_distortion,
+        color_jitter_strength=color_jitter_strength,
+        use_gaussian_blur=use_gaussian_blur,
         enc_mask_scale=enc_mask_scale,
         pred_mask_scale=pred_mask_scale,
         aspect_ratio=aspect_ratio,
         num_enc_masks=num_enc_masks,
         num_pred_masks=num_pred_masks,
         min_keep=min_keep,
+        allow_overlap=allow_overlap,
         seed=seed,
         spacing_tolerance=spacing_tolerance,
         backend=wsi_backend,
@@ -916,6 +1033,38 @@ def main(
         or len(getattr(unsupervised_dataset, "anchors", []))
         or len(unsupervised_dataset)
     )
+    epoch_schedule_summary = build_epoch_equivalent_schedule_summary(
+        optimization_cfg=dict(args.get("optimization", {}) or {}),
+        anchor_count=int(anchor_count),
+    )
+    logger.info(
+        "Epoch-equivalent schedule:\n"
+        f" - implied_epochs_from_budget={float(epoch_schedule_summary['implied_epochs_from_budget']):.6f}\n"
+        f" - optimization.epochs_equivalent={epoch_schedule_summary['epochs_equivalent']}\n"
+        f" - recommended_total_images_budget={epoch_schedule_summary['recommended_total_images_budget']}\n"
+        f" - optimization.warmup={float(epoch_schedule_summary['warmup_fraction']):.6f}\n"
+        f" - optimization.warmup_epochs={epoch_schedule_summary['warmup_epochs']}\n"
+        f" - recommended_warmup_fraction={epoch_schedule_summary['recommended_warmup_fraction']}"
+    )
+    if epoch_schedule_summary["total_images_budget_matches_recommendation"] is False:
+        logger.warning(
+            "WARNING! optimization.total_images_budget=%d differs from "
+            "epochs-equivalent recommendation=%d (anchor_count=%d, epochs_equivalent=%s).",
+            int(epoch_schedule_summary["total_images_budget"]),
+            int(epoch_schedule_summary["recommended_total_images_budget"]),
+            int(epoch_schedule_summary["anchor_count"]),
+            str(epoch_schedule_summary["epochs_equivalent"]),
+        )
+    if epoch_schedule_summary["warmup_fraction_matches_recommendation"] is False:
+        logger.warning(
+            "WARNING! optimization.warmup=%.6f differs from warmup-epochs recommendation=%.6f "
+            "(warmup_epochs=%s, epochs_equivalent=%s, implied_epochs_from_budget=%.6f).",
+            float(epoch_schedule_summary["warmup_fraction"]),
+            float(epoch_schedule_summary["recommended_warmup_fraction"]),
+            str(epoch_schedule_summary["warmup_epochs"]),
+            str(epoch_schedule_summary["epochs_equivalent"]),
+            float(epoch_schedule_summary["implied_epochs_from_budget"]),
+        )
     anchor_budget = compute_anchor_pass_budget(
         anchor_count=anchor_count,
         total_images_budget=total_images_budget,

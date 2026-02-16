@@ -34,6 +34,13 @@ def _base_cfg() -> dict:
             "enc_mask_scale": [0.85, 1.0],
             "pred_mask_scale": [0.15, 0.2],
             "aspect_ratio": [0.75, 1.5],
+            "crop_scale": [0.3, 1.0],
+            "use_horizontal_flip": True,
+            "horizontal_flip_prob": 0.5,
+            "use_color_distortion": False,
+            "color_jitter_strength": 0.0,
+            "use_gaussian_blur": False,
+            "allow_overlap": False,
             "num_enc_masks": 1,
             "num_pred_masks": 4,
             "min_keep": 16,
@@ -144,3 +151,56 @@ def test_cross_resolution_mode_does_not_require_canonical_fields(tmp_path: Path)
 
     loaded = load_training_config(config_file=str(cfg_path))
     assert loaded["pretraining"]["mode"] == "cross_resolution"
+
+
+def test_canonical_allow_overlap_must_be_boolean(tmp_path: Path):
+    cfg = _base_cfg()
+    cfg["pretraining"]["mode"] = "canonical"
+    cfg["canonical"]["allow_overlap"] = "yes"
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="canonical.allow_overlap"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_canonical_crop_scale_must_be_unit_interval_pair(tmp_path: Path):
+    cfg = _base_cfg()
+    cfg["pretraining"]["mode"] = "canonical"
+    cfg["canonical"]["crop_scale"] = [0.0, 1.2]
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="canonical.crop_scale"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_canonical_horizontal_flip_prob_must_be_unit_interval(tmp_path: Path):
+    cfg = _base_cfg()
+    cfg["pretraining"]["mode"] = "canonical"
+    cfg["canonical"]["horizontal_flip_prob"] = 1.5
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="canonical.horizontal_flip_prob"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_optimization_epochs_equivalent_must_be_positive(tmp_path: Path):
+    cfg = _base_cfg()
+    cfg["optimization"]["epochs_equivalent"] = 0
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="optimization.epochs_equivalent"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_optimization_warmup_epochs_must_be_positive(tmp_path: Path):
+    cfg = _base_cfg()
+    cfg["optimization"]["warmup_epochs"] = -1
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="optimization.warmup_epochs"):
+        load_training_config(config_file=str(cfg_path))
