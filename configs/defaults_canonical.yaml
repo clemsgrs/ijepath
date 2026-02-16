@@ -21,16 +21,6 @@ data:
   max_open_slides_per_worker: 16
   anchor_stream_batch_size: 2048  # Parquet rows decoded per reader batch; larger values reduce rollover frequency.
 
-  # -- Cross-resolution geometry (override in profile config)
-  # Final model tensor sizes are derived as nearest multiples of meta.patch_size:
-  # context_px = snap(round(context_fov_um / context_mpp), patch_size)
-  # target_px = snap(round(target_fov_um / target_mpp), patch_size)
-  context_mpp:
-  target_mpp:
-  context_fov_um:
-  target_fov_um:
-  targets_per_context:
-
   # -- Tissue-aware target sampling
   min_target_tissue_fraction: 0.25
   insufficient_target_policy: skip_anchor  # skip_anchor | skip_slide | lower_threshold
@@ -137,7 +127,7 @@ wandb:
   project: ijepath
   username: "clemsg"
   exp_name: "ijepath"
-  tags: ["ijepath", "${meta.architecture}", "${data.context_fov_um}-to-${data.target_fov_um}"]
+  tags: ["ijepath", "${meta.architecture}", "canonical-${canonical.source_tile_size_px}to${canonical.crop_size_px}@${canonical.input_mpp}mpp"]
   dir: /tmp/wandb
   group:
   resume_id:
