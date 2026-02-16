@@ -28,6 +28,7 @@ def test_process_main_defers_config_logging_to_trainer(monkeypatch):
         rank=0,
         profile_config="profile.yaml",
         run_config="run.yaml",
+        default_config="configs/defaults_cross_resolution.yaml",
         opts=["x=1"],
         world_size=1,
         visible_devices=["cpu"],
@@ -70,6 +71,7 @@ def test_process_main_logs_traceback_then_reraises_worker_failure(monkeypatch):
             rank=1,
             profile_config="profile.yaml",
             run_config="run.yaml",
+            default_config="configs/defaults_cross_resolution.yaml",
             opts=["x=1"],
             world_size=2,
             visible_devices=["0", "1"],
@@ -481,6 +483,7 @@ def test_launch_worker_processes_waits_for_all_children(monkeypatch):
     monkeypatch.setattr(main_entry, "_resolve_master_port", lambda world_size: 29456)
 
     main_entry.launch_worker_processes(
+        default_config="configs/defaults_cross_resolution.yaml",
         profile_config="profile.yaml",
         run_config="run.yaml",
         opts=["x=1"],
@@ -513,6 +516,7 @@ def test_launch_worker_processes_raises_on_failed_child(monkeypatch):
 
     try:
         main_entry.launch_worker_processes(
+            default_config="configs/defaults_cross_resolution.yaml",
             profile_config="profile.yaml",
             run_config="run.yaml",
             opts=[],
@@ -566,6 +570,7 @@ def test_launch_worker_processes_cleans_up_on_keyboard_interrupt(monkeypatch):
 
     with pytest.raises(SystemExit, match="Interrupted while waiting for worker processes"):
         main_entry.launch_worker_processes(
+            default_config="configs/defaults_cross_resolution.yaml",
             profile_config="profile.yaml",
             run_config="run.yaml",
             opts=[],
@@ -703,6 +708,7 @@ def test_resolve_reserved_tuning_device_token_returns_none_when_tuning_disabled(
         lambda **_kwargs: {"tuning": {"enable": False}},
     )
     token = main_entry._resolve_reserved_tuning_device_token(
+        default_config="configs/defaults_cross_resolution.yaml",
         profile_config="profile.yaml",
         run_config="run.yaml",
         opts=[],
@@ -721,6 +727,7 @@ def test_resolve_reserved_tuning_device_token_validates_visibility(monkeypatch):
     )
     try:
         main_entry._resolve_reserved_tuning_device_token(
+            default_config="configs/defaults_cross_resolution.yaml",
             profile_config="profile.yaml",
             run_config="run.yaml",
             opts=[],
@@ -738,6 +745,7 @@ def test_resolve_reserved_tuning_device_token_auto_picks_last_visible(monkeypatc
         lambda **_kwargs: {"tuning": {"enable": True, "execution": {"mode": "async", "device": "auto"}}},
     )
     token = main_entry._resolve_reserved_tuning_device_token(
+        default_config="configs/defaults_cross_resolution.yaml",
         profile_config="profile.yaml",
         run_config="run.yaml",
         opts=[],
@@ -767,6 +775,7 @@ def test_process_main_remaps_rank0_tuning_device_to_local_cuda1(monkeypatch):
         rank=0,
         profile_config="profile.yaml",
         run_config="run.yaml",
+        default_config="configs/defaults_cross_resolution.yaml",
         opts=["x=1", "tuning.execution.device=cuda:7"],
         world_size=1,
         visible_devices=["0"],

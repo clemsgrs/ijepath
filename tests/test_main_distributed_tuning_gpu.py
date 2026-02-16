@@ -18,6 +18,7 @@ def test_resolve_distributed_gpu_request_without_tuning(monkeypatch):
         lambda **_kwargs: {"tuning": {"enable": False}},
     )
     out = main_dist._resolve_distributed_gpu_request(
+        default_config="configs/defaults_cross_resolution.yaml",
         profile_config="profile.yaml",
         run_config="run.yaml",
         opts=[],
@@ -34,6 +35,7 @@ def test_resolve_distributed_gpu_request_requires_spare_gpu_index(monkeypatch):
     )
     try:
         main_dist._resolve_distributed_gpu_request(
+            default_config="configs/defaults_cross_resolution.yaml",
             profile_config="profile.yaml",
             run_config="run.yaml",
             opts=[],
@@ -51,6 +53,7 @@ def test_resolve_distributed_gpu_request_adds_one_gpu_for_tuning(monkeypatch):
         lambda **_kwargs: {"tuning": {"enable": True, "execution": {"mode": "async", "device": "cuda:4"}}},
     )
     out = main_dist._resolve_distributed_gpu_request(
+        default_config="configs/defaults_cross_resolution.yaml",
         profile_config="profile.yaml",
         run_config="run.yaml",
         opts=[],
@@ -66,6 +69,7 @@ def test_resolve_distributed_gpu_request_auto_uses_spare_index(monkeypatch):
         lambda **_kwargs: {"tuning": {"enable": True, "execution": {"mode": "async", "device": "auto"}}},
     )
     out = main_dist._resolve_distributed_gpu_request(
+        default_config="configs/defaults_cross_resolution.yaml",
         profile_config="profile.yaml",
         run_config="run.yaml",
         opts=[],
@@ -100,6 +104,7 @@ def test_trainer_logs_traceback_and_reraises_app_main_failure(monkeypatch):
     trainer = main_dist.Trainer(
         profile_config="profile.yaml",
         run_config="run.yaml",
+        default_config="configs/defaults_cross_resolution.yaml",
         opts=["x=1"],
     )
     try:

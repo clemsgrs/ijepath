@@ -192,14 +192,12 @@ def _discover_visible_devices():
 
 def _resolve_reserved_tuning_device_token(
     *,
-    default_config: str | None = None,
+    default_config: str,
     profile_config: str,
     run_config: str,
     opts: list[str] | None,
     visible_devices: list[str],
 ) -> str | None:
-    if default_config is None:
-        default_config = DEFAULT_CONFIG_BY_MODE["cross_resolution"]
     params = load_training_config(
         default_config=default_config,
         profile_config=profile_config,
@@ -328,11 +326,9 @@ def process_main(
     visible_devices,
     master_addr,
     master_port,
+    default_config,
     tuning_device_token=None,
-    default_config=None,
 ):
-    if default_config is None:
-        default_config = DEFAULT_CONFIG_BY_MODE["cross_resolution"]
     device_token = visible_devices[rank]
     rank_opts = list(opts or [])
     if device_token != "cpu":
@@ -397,15 +393,13 @@ def process_main(
 
 def launch_worker_processes(
     *,
-    default_config: str | None = None,
+    default_config: str,
     profile_config: str,
     run_config: str,
     opts: list[str] | None,
     visible_devices: list[str],
     tuning_device_token: str | None = None,
 ) -> None:
-    if default_config is None:
-        default_config = DEFAULT_CONFIG_BY_MODE["cross_resolution"]
     world_size = len(visible_devices)
     master_addr = _resolve_master_addr(world_size)
     master_port = _resolve_master_port(world_size)
@@ -423,8 +417,8 @@ def launch_worker_processes(
                     visible_devices,
                     master_addr,
                     master_port,
-                    tuning_device_token,
                     default_config,
+                    tuning_device_token,
                 ),
             )
             process.start()

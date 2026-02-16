@@ -74,14 +74,12 @@ def _validate_master_port(value: str | int) -> int:
 
 def _resolve_distributed_gpu_request(
     *,
-    default_config: str | None = None,
+    default_config: str,
     profile_config: str,
     run_config: str,
     opts: list[str] | None,
     tasks_per_node: int,
 ) -> int:
-    if default_config is None:
-        default_config = DEFAULT_CONFIG_BY_MODE["cross_resolution"]
     params = load_training_config(
         default_config=default_config,
         profile_config=profile_config,
@@ -115,7 +113,7 @@ class Trainer:
         self,
         profile_config=None,
         run_config=None,
-        default_config=None,
+        default_config="",
         opts=None,
         load_model=None,
         master_port=None,
@@ -149,8 +147,8 @@ class Trainer:
         setup_logging(level=logging.INFO)
         try:
             default_config = self.default_config
-            if default_config is None:
-                default_config = DEFAULT_CONFIG_BY_MODE["cross_resolution"]
+            if not str(default_config).strip():
+                raise ValueError("default_config is required")
             logger.info(
                 f"called-params default={default_config} "
                 f"profile={self.profile_config} run={self.run_config} opts={self.opts}"
