@@ -17,6 +17,7 @@ def test_trainer_requires_master_port_for_multi_task_slurm(monkeypatch):
     trainer = main_distributed_entry.Trainer(
         profile_config="profile.yaml",
         run_config="run.yaml",
+        default_config="configs/defaults_cross_resolution.yaml",
         opts=[],
     )
 
@@ -39,6 +40,7 @@ def test_trainer_uses_master_port_argument(monkeypatch):
     trainer = main_distributed_entry.Trainer(
         profile_config="profile.yaml",
         run_config="run.yaml",
+        default_config="configs/defaults_cross_resolution.yaml",
         opts=["x=1"],
         master_port=29671,
     )
@@ -72,6 +74,7 @@ def test_trainer_logs_traceback_and_reraises_app_main_failure(monkeypatch):
     trainer = main_distributed_entry.Trainer(
         profile_config="profile.yaml",
         run_config="run.yaml",
+        default_config="configs/defaults_cross_resolution.yaml",
         opts=["x=1"],
     )
 

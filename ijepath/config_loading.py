@@ -4,6 +4,8 @@ from typing import Any
 
 from omegaconf import OmegaConf
 
+_VALID_PRETRAINING_MODES = {"canonical", "cross_resolution"}
+
 _EARLY_STOPPING_METRIC_MODES: dict[str, dict[str, str]] = {
     "pathorob": {
         "ri": "max",
@@ -13,6 +15,70 @@ _EARLY_STOPPING_METRIC_MODES: dict[str, dict[str, str]] = {
         "apd_avg": "min",
     }
 }
+
+
+def _normalize_pretraining_mode(raw_mode: Any) -> str:
+    mode = str(raw_mode).strip().lower()
+    if mode not in _VALID_PRETRAINING_MODES:
+        raise ValueError(
+            "pretraining.mode must be one of {'canonical', 'cross_resolution'}, "
+            f"got {raw_mode!r}"
+        )
+    return mode
+
+
+def _extract_pretraining_mode_from_mapping(payload: dict[str, Any]) -> str | None:
+    pretraining_cfg = dict(payload.get("pretraining", {}) or {})
+    raw_mode = pretraining_cfg.get("mode", None)
+    if raw_mode is None or not str(raw_mode).strip():
+        return None
+    return _normalize_pretraining_mode(raw_mode)
+
+
+def _extract_pretraining_mode_from_config_file(path: str | None) -> str | None:
+    if path is None:
+        return None
+    cfg = OmegaConf.load(path)
+    container = OmegaConf.to_container(cfg, resolve=False)
+    if not isinstance(container, dict):
+        return None
+    return _extract_pretraining_mode_from_mapping(container)
+
+
+def _extract_pretraining_mode_from_opts(opts: Sequence[str] | None) -> str | None:
+    mode_value: str | None = None
+    for opt in list(opts or []):
+        token = str(opt)
+        if token.startswith("pretraining.mode="):
+            mode_value = token.split("=", 1)[1]
+    if mode_value is None or not str(mode_value).strip():
+        return None
+    return _normalize_pretraining_mode(mode_value)
+
+
+def infer_pretraining_mode(
+    *,
+    profile_config: str | None,
+    run_config: str | None,
+    opts: Sequence[str] | None,
+) -> str:
+    mode = _extract_pretraining_mode_from_opts(opts)
+    if mode is not None:
+        return mode
+
+    mode = _extract_pretraining_mode_from_config_file(run_config)
+    if mode is not None:
+        return mode
+
+    mode = _extract_pretraining_mode_from_config_file(profile_config)
+    if mode is not None:
+        return mode
+
+    raise ValueError(
+        "Unable to infer pretraining.mode for defaults selection. "
+        "Set pretraining.mode in --run-config (preferred), --profile-config, "
+        "or CLI opts (e.g., pretraining.mode=canonical)."
+    )
 
 
 def load_training_config(
@@ -163,6 +229,26 @@ def _attach_config_sources(
     }
 
 
+def _validate_pair(
+    *,
+    value: Any,
+    key_name: str,
+    positive_only: bool = True,
+    unit_interval: bool = False,
+) -> tuple[float, float]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"{key_name} must be a two-value list/tuple")
+    lo = float(value[0])
+    hi = float(value[1])
+    if positive_only and (lo <= 0.0 or hi <= 0.0):
+        raise ValueError(f"{key_name} values must be > 0")
+    if lo > hi:
+        raise ValueError(f"{key_name} must satisfy min <= max")
+    if unit_interval and (lo > 1.0 or hi > 1.0):
+        raise ValueError(f"{key_name} values must be <= 1")
+    return lo, hi
+
+
 def _validate_training_config(cfg: dict[str, Any]) -> None:
     if "batch_size" in cfg.get("data", {}):
         raise ValueError("Unsupported config value: data.batch_size")
@@ -174,8 +260,6 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         raise ValueError("Unsupported config value: data.samples_per_chunk")
     if "samples_per_epoch" in cfg.get("data", {}):
         raise ValueError("Unsupported config value: data.samples_per_epoch")
-    if "epochs" in cfg.get("optimization", {}):
-        raise ValueError("Unsupported config value: optimization.epochs")
     if "checkpoint_every_epochs" in cfg.get("logging", {}):
         raise ValueError("Unsupported config value: logging.checkpoint_every_epochs")
     if "checkpoint_every_images" in cfg.get("logging", {}):
@@ -193,12 +277,7 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
     pretraining_mode_raw = pretraining_cfg.get("mode", None)
     if pretraining_mode_raw is None or not str(pretraining_mode_raw).strip():
         raise ValueError("Missing required config value: pretraining.mode")
-    pretraining_mode = str(pretraining_mode_raw).strip().lower()
-    if pretraining_mode not in {"canonical", "cross_resolution"}:
-        raise ValueError(
-            "pretraining.mode must be one of {'canonical', 'cross_resolution'}, "
-            f"got {pretraining_mode_raw!r}"
-        )
+    pretraining_mode = _normalize_pretraining_mode(pretraining_mode_raw)
     pretraining_cfg["mode"] = pretraining_mode
     cfg["pretraining"] = pretraining_cfg
 
@@ -240,8 +319,9 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
             ("canonical", "input_mpp"),
             ("canonical", "source_tile_size_px"),
             ("canonical", "crop_size_px"),
-            ("canonical", "transform_preset"),
-            ("canonical", "mask_preset"),
+            ("canonical", "enc_mask_scale"),
+            ("canonical", "pred_mask_scale"),
+            ("canonical", "aspect_ratio"),
             ("canonical", "num_enc_masks"),
             ("canonical", "num_pred_masks"),
             ("canonical", "min_keep"),
@@ -287,6 +367,52 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
             raise ValueError("canonical.source_tile_size_px must be >= canonical.crop_size_px")
         if crop_size_px % int(patch_size) != 0:
             raise ValueError("canonical.crop_size_px must be divisible by meta.patch_size")
+        _validate_pair(
+            value=canonical_cfg["enc_mask_scale"],
+            key_name="canonical.enc_mask_scale",
+            positive_only=True,
+            unit_interval=True,
+        )
+        _validate_pair(
+            value=canonical_cfg["pred_mask_scale"],
+            key_name="canonical.pred_mask_scale",
+            positive_only=True,
+            unit_interval=True,
+        )
+        _validate_pair(
+            value=canonical_cfg["aspect_ratio"],
+            key_name="canonical.aspect_ratio",
+            positive_only=True,
+            unit_interval=False,
+        )
+        crop_scale = canonical_cfg.get("crop_scale", None)
+        if crop_scale is not None:
+            _validate_pair(
+                value=crop_scale,
+                key_name="canonical.crop_scale",
+                positive_only=True,
+                unit_interval=True,
+            )
+        use_horizontal_flip = canonical_cfg.get("use_horizontal_flip", None)
+        if use_horizontal_flip is not None and not isinstance(use_horizontal_flip, bool):
+            raise ValueError("canonical.use_horizontal_flip must be a boolean")
+        horizontal_flip_prob = canonical_cfg.get("horizontal_flip_prob", None)
+        if horizontal_flip_prob is not None:
+            prob = float(horizontal_flip_prob)
+            if prob < 0.0 or prob > 1.0:
+                raise ValueError("canonical.horizontal_flip_prob must be in [0, 1]")
+        use_color_distortion = canonical_cfg.get("use_color_distortion", None)
+        if use_color_distortion is not None and not isinstance(use_color_distortion, bool):
+            raise ValueError("canonical.use_color_distortion must be a boolean")
+        color_jitter_strength = canonical_cfg.get("color_jitter_strength", None)
+        if color_jitter_strength is not None and float(color_jitter_strength) < 0.0:
+            raise ValueError("canonical.color_jitter_strength must be >= 0")
+        use_gaussian_blur = canonical_cfg.get("use_gaussian_blur", None)
+        if use_gaussian_blur is not None and not isinstance(use_gaussian_blur, bool):
+            raise ValueError("canonical.use_gaussian_blur must be a boolean")
+        allow_overlap = canonical_cfg.get("allow_overlap", None)
+        if allow_overlap is not None and not isinstance(allow_overlap, bool):
+            raise ValueError("canonical.allow_overlap must be a boolean")
         if int(canonical_cfg["num_enc_masks"]) <= 0:
             raise ValueError("canonical.num_enc_masks must be > 0")
         if int(canonical_cfg["num_pred_masks"]) <= 0:

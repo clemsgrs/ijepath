@@ -24,7 +24,12 @@ class CanonicalWSIDataset(CrossResolutionWSIDataset):
         seed: int,
         spacing_tolerance: float = 0.05,
         backend: str = "asap",
-        transform_preset: str = "official_ijepa",
+        crop_scale: tuple[float, float] = (0.3, 1.0),
+        use_horizontal_flip: bool = True,
+        horizontal_flip_prob: float = 0.5,
+        use_color_distortion: bool = False,
+        color_jitter_strength: float = 0.0,
+        use_gaussian_blur: bool = False,
         world_size: int = 1,
         rank: int = 0,
         sampling_strategy: str = "stratified_weighted",
@@ -36,7 +41,12 @@ class CanonicalWSIDataset(CrossResolutionWSIDataset):
         self.input_mpp = float(input_mpp)
         self.source_tile_size_px = int(source_tile_size_px)
         self.crop_size_px = int(crop_size_px)
-        self.transform_preset = str(transform_preset).strip().lower()
+        self.crop_scale = tuple(float(x) for x in crop_scale)
+        self.use_horizontal_flip = bool(use_horizontal_flip)
+        self.horizontal_flip_prob = float(horizontal_flip_prob)
+        self.use_color_distortion = bool(use_color_distortion)
+        self.color_jitter_strength = float(color_jitter_strength)
+        self.use_gaussian_blur = bool(use_gaussian_blur)
         if self.input_mpp <= 0:
             raise ValueError("input_mpp must be > 0")
         if self.source_tile_size_px <= 0:
@@ -72,23 +82,54 @@ class CanonicalWSIDataset(CrossResolutionWSIDataset):
         )
 
         self.image_transform = self._build_transform(
-            preset=self.transform_preset,
             crop_size_px=self.crop_size_px,
+            crop_scale=self.crop_scale,
+            use_horizontal_flip=self.use_horizontal_flip,
+            horizontal_flip_prob=self.horizontal_flip_prob,
+            use_color_distortion=self.use_color_distortion,
+            color_jitter_strength=self.color_jitter_strength,
+            use_gaussian_blur=self.use_gaussian_blur,
         )
 
     @staticmethod
-    def _build_transform(*, preset: str, crop_size_px: int):
-        if preset != "official_ijepa":
-            raise ValueError(f"Unsupported canonical transform preset: {preset!r}")
-        return transforms.Compose(
+    def _build_transform(
+        *,
+        crop_size_px: int,
+        crop_scale: tuple[float, float],
+        use_horizontal_flip: bool,
+        horizontal_flip_prob: float,
+        use_color_distortion: bool,
+        color_jitter_strength: float,
+        use_gaussian_blur: bool,
+    ):
+        steps = [
+            transforms.ToPILImage(),
+            transforms.RandomResizedCrop(
+                size=int(crop_size_px),
+                scale=tuple(float(x) for x in crop_scale),
+                interpolation=transforms.InterpolationMode.BICUBIC,
+            ),
+        ]
+        if bool(use_horizontal_flip):
+            steps.append(transforms.RandomHorizontalFlip(p=float(horizontal_flip_prob)))
+        if bool(use_color_distortion):
+            jitter_strength = float(color_jitter_strength)
+            steps.append(
+                transforms.ColorJitter(
+                    brightness=0.8 * jitter_strength,
+                    contrast=0.8 * jitter_strength,
+                    saturation=0.8 * jitter_strength,
+                    hue=0.2 * jitter_strength,
+                )
+            )
+        if bool(use_gaussian_blur):
+            kernel_size = max(3, int(round(float(crop_size_px) * 0.1)))
+            if kernel_size % 2 == 0:
+                kernel_size += 1
+            steps.append(transforms.GaussianBlur(kernel_size=kernel_size, sigma=(0.1, 2.0)))
+
+        steps.extend(
             [
-                transforms.ToPILImage(),
-                transforms.RandomResizedCrop(
-                    size=int(crop_size_px),
-                    scale=(0.3, 1.0),
-                    interpolation=transforms.InterpolationMode.BICUBIC,
-                ),
-                transforms.RandomHorizontalFlip(p=0.5),
                 transforms.ToTensor(),
                 transforms.Normalize(
                     mean=tuple(float(x) for x in IMAGENET_MEAN.tolist()),
@@ -96,6 +137,7 @@ class CanonicalWSIDataset(CrossResolutionWSIDataset):
                 ),
             ]
         )
+        return transforms.Compose(steps)
 
     def _build_sample_with_policy(self, anchor: dict, index: int):
         del index
@@ -150,7 +192,13 @@ class CanonicalWSIDataset(CrossResolutionWSIDataset):
             "source_tile_size_px_at_effective_spacing": int(source_size_px_at_spacing),
             "source_tile_size_px_requested": int(self.source_tile_size_px),
             "model_crop_size_px": int(self.crop_size_px),
-            "transform_preset": str(self.transform_preset),
+            "crop_scale_min": float(self.crop_scale[0]),
+            "crop_scale_max": float(self.crop_scale[1]),
+            "use_horizontal_flip": int(self.use_horizontal_flip),
+            "horizontal_flip_prob": float(self.horizontal_flip_prob),
+            "use_color_distortion": int(self.use_color_distortion),
+            "color_jitter_strength": float(self.color_jitter_strength),
+            "use_gaussian_blur": int(self.use_gaussian_blur),
             "stratum_id": str(anchor.get("stratum_id", "unknown")),
             "anchor_stream_batch_id": int(anchor.get("_anchor_stream_batch_id", -1)),
             "anchor_stream_row_in_batch": int(anchor.get("_anchor_stream_row_in_batch", -1)),

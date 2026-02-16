@@ -25,6 +25,7 @@ Standard SSL in pathology can overfit stain/scanner shortcuts. This project targ
 ## Docs
 - `docs/pathology/README.md`
 - `docs/pathology/canonical_ijepa.md`
+- `docs/pathology/canonical_vith14_parity.md`
 - `docs/pathology/dino_comparison_protocol.md`
 
 ## Sample curation pipeline
@@ -85,6 +86,15 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   data.slide_metadata_parquet=${DATA_ROOT}/indexes/slide_metadata.parquet \
   data.anchor_catalog_manifest=${DATA_ROOT}/indexes/anchor_catalog_manifest.json
 
+# 4c) Smoke training (canonical ViT-H/14 parity profile)
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --profile-config configs/profiles/canonical_vith14_parity_20x_256_224.yaml \
+  --run-config configs/runs/canonical_vith14_parity_smoke.yaml \
+  data.slide_manifest_csv=${DATA_ROOT}/manifests/slides_with_tissue_masks.csv \
+  data.slide_metadata_parquet=${DATA_ROOT}/indexes/slide_metadata.parquet \
+  data.anchor_catalog_manifest=${DATA_ROOT}/indexes/anchor_catalog_manifest.json \
+  data.wsi_backend=openslide
+
 # OR one-command orchestration (build index + build anchors + train, cross-resolution example)
 CUDA_VISIBLE_DEVICES=0 python main.py \
   --profile-config configs/profiles/ctx1p0_tgt0p5_fov512um_k4.yaml \
@@ -106,7 +116,9 @@ CUDA_VISIBLE_DEVICES=0,1 python main.py \
 # - For non-main.py multi-process launches (e.g. SLURM), set MASTER_PORT
 #   or pass --master-port to main_distributed.py.
 
-# defaults config is implicit: configs/defaults.yaml
+# defaults config is selected from pretraining.mode:
+# - canonical -> configs/defaults_canonical.yaml
+# - cross_resolution -> configs/defaults_cross_resolution.yaml
 # mode is REQUIRED in run config via pretraining.mode (no implicit default)
 
 # Merged resolved config is saved automatically to:

@@ -3,40 +3,38 @@ pretraining:
 
 data:
   slide_manifest_csv: /data/pathology/projects/clement/discern/multi-center-prostate.csv
-  slide_metadata_parquet: data/3-center-prostate/indexes/slide_metadata.parquet
-  anchor_catalog_manifest: data/3-center-prostate/indexes/anchor_catalog_manifest.json
+  slide_metadata_parquet:
+  anchor_catalog_manifest:
   batch_size_per_gpu: 32
   num_workers: 16
   anchor_stream_batch_size: 2048
 
-canonical:
-  input_mpp: 0.5
-  source_tile_size_px: 256
-  crop_size_px: 224
-  enc_mask_scale: [0.85, 1.0]
-  pred_mask_scale: [0.15, 0.2]
-  aspect_ratio: [0.75, 1.5]
-  num_enc_masks: 1
-  num_pred_masks: 4
-  min_keep: 16
-
 meta:
-  architecture: vit_small
-  patch_size: 16
-  pred_depth: 3
-  pred_emb_dim: 192
+  architecture: vit_huge
+  patch_size: 14
+  pred_depth: 12
+  pred_emb_dim: 384
   use_bfloat16: true
   load_checkpoint: false
 
 optimization:
-  total_images_budget: 1000000
-  warmup: 0.1
-  lr: 0.0002
-  start_lr: 0.00002
+  # Upstream I-JEPA ViT-H/14 recipe uses epochs=300 over ImageNet-1k train size (1,281,167 images):
+  # total_images_budget = 300 * 1,281,167 = 384,350,100
+  total_images_budget: 384350100
+  # Upstream warmup=40 epochs, expressed in this repo as warmup fraction:
+  # warmup = 40 / 300 = 0.1333333333
+  warmup: 0.1333333333
+  ipe_scale: 1.0
+  lr: 0.001
+  start_lr: 0.0002
   final_lr: 0.000001
   weight_decay: 0.04
-  final_weight_decay: 0.1
+  final_weight_decay: 0.4
   ema: [0.996, 1.0]
+
+training:
+  log_every: 10000
+  save_every: 10000
 
 tuning:
   enable: true
@@ -99,18 +97,14 @@ tuning:
     save_best_checkpoint: true
     best_checkpoint_name: best-robustness.pth.tar
 
-training:
-  log_every: 10000
-  save_every: 10000
-
 output:
   root: outputs
   shared_cache_root: ${output.root}/cache
 
 logging:
-  write_tag: jepa-canonical-pathorob
+  write_tag: jepa-canonical-vith14-parity
   step_log_every_images: 0
 
 wandb:
   enable: true
-  exp_name: pathorob-camelyon-canonical
+  exp_name: pathorob-camelyon-canonical-vith14-parity

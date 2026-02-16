@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ijepath.config_loading import load_training_config
+from ijepath.config_loading import infer_pretraining_mode, load_training_config
 
 
 def _write_yaml(path: Path, payload: dict) -> None:
@@ -29,8 +29,16 @@ def _base_cfg() -> dict:
             "input_mpp": 0.5,
             "source_tile_size_px": 256,
             "crop_size_px": 224,
-            "transform_preset": "official_ijepa",
-            "mask_preset": "official_ijepa_multiblock",
+            "enc_mask_scale": [0.85, 1.0],
+            "pred_mask_scale": [0.15, 0.2],
+            "aspect_ratio": [0.75, 1.5],
+            "crop_scale": [0.3, 1.0],
+            "use_horizontal_flip": True,
+            "horizontal_flip_prob": 0.5,
+            "use_color_distortion": False,
+            "color_jitter_strength": 0.0,
+            "use_gaussian_blur": False,
+            "allow_overlap": False,
             "num_enc_masks": 1,
             "num_pred_masks": 4,
             "min_keep": 16,
@@ -141,3 +149,89 @@ def test_cross_resolution_mode_does_not_require_canonical_fields(tmp_path: Path)
 
     loaded = load_training_config(config_file=str(cfg_path))
     assert loaded["pretraining"]["mode"] == "cross_resolution"
+
+
+def test_canonical_mode_does_not_require_transform_preset(tmp_path: Path):
+    cfg = _base_cfg()
+    cfg["pretraining"]["mode"] = "canonical"
+    cfg["canonical"].pop("transform_preset", None)
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(cfg_path, cfg)
+
+    loaded = load_training_config(config_file=str(cfg_path))
+    assert loaded["pretraining"]["mode"] == "canonical"
+
+
+def test_canonical_allow_overlap_must_be_boolean(tmp_path: Path):
+    cfg = _base_cfg()
+    cfg["pretraining"]["mode"] = "canonical"
+    cfg["canonical"]["allow_overlap"] = "yes"
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="canonical.allow_overlap"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_canonical_crop_scale_must_be_unit_interval_pair(tmp_path: Path):
+    cfg = _base_cfg()
+    cfg["pretraining"]["mode"] = "canonical"
+    cfg["canonical"]["crop_scale"] = [0.0, 1.2]
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="canonical.crop_scale"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_canonical_horizontal_flip_prob_must_be_unit_interval(tmp_path: Path):
+    cfg = _base_cfg()
+    cfg["pretraining"]["mode"] = "canonical"
+    cfg["canonical"]["horizontal_flip_prob"] = 1.5
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="canonical.horizontal_flip_prob"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_infer_pretraining_mode_prefers_opts_over_run_and_profile(tmp_path: Path):
+    profile_path = tmp_path / "profile.yaml"
+    run_path = tmp_path / "run.yaml"
+    _write_yaml(profile_path, {"pretraining": {"mode": "cross_resolution"}})
+    _write_yaml(run_path, {"pretraining": {"mode": "cross_resolution"}})
+
+    mode = infer_pretraining_mode(
+        profile_config=str(profile_path),
+        run_config=str(run_path),
+        opts=["pretraining.mode=canonical"],
+    )
+    assert mode == "canonical"
+
+
+def test_infer_pretraining_mode_uses_run_before_profile(tmp_path: Path):
+    profile_path = tmp_path / "profile.yaml"
+    run_path = tmp_path / "run.yaml"
+    _write_yaml(profile_path, {"pretraining": {"mode": "cross_resolution"}})
+    _write_yaml(run_path, {"pretraining": {"mode": "canonical"}})
+
+    mode = infer_pretraining_mode(
+        profile_config=str(profile_path),
+        run_config=str(run_path),
+        opts=[],
+    )
+    assert mode == "canonical"
+
+
+def test_infer_pretraining_mode_errors_when_missing_everywhere(tmp_path: Path):
+    profile_path = tmp_path / "profile.yaml"
+    run_path = tmp_path / "run.yaml"
+    _write_yaml(profile_path, {"x": 1})
+    _write_yaml(run_path, {"y": 2})
+
+    with pytest.raises(ValueError, match="Unable to infer pretraining.mode"):
+        infer_pretraining_mode(
+            profile_config=str(profile_path),
+            run_config=str(run_path),
+            opts=[],
+        )

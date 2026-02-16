@@ -19,11 +19,15 @@ import time
 from pathlib import Path
 
 from ijepath.utils.distributed import init_distributed
-from ijepath.config_loading import load_training_config
+from ijepath.config_loading import infer_pretraining_mode, load_training_config
 from ijepath.utils.log_utils import setup_logging
 from ijepath.train import main as app_main
 
-DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parent / "configs" / "defaults.yaml")
+_REPO_ROOT = Path(__file__).resolve().parent
+DEFAULT_CONFIG_BY_MODE = {
+    "canonical": str(_REPO_ROOT / "configs" / "defaults_canonical.yaml"),
+    "cross_resolution": str(_REPO_ROOT / "configs" / "defaults_cross_resolution.yaml"),
+}
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -188,13 +192,14 @@ def _discover_visible_devices():
 
 def _resolve_reserved_tuning_device_token(
     *,
+    default_config: str,
     profile_config: str,
     run_config: str,
     opts: list[str] | None,
     visible_devices: list[str],
 ) -> str | None:
     params = load_training_config(
-        default_config=DEFAULT_CONFIG_PATH,
+        default_config=default_config,
         profile_config=profile_config,
         run_config=run_config,
         opts=opts,
@@ -321,6 +326,7 @@ def process_main(
     visible_devices,
     master_addr,
     master_port,
+    default_config,
     tuning_device_token=None,
 ):
     device_token = visible_devices[rank]
@@ -346,19 +352,19 @@ def process_main(
 
     try:
         logger.info(
-            f"called-params default={DEFAULT_CONFIG_PATH} "
+            f"called-params default={default_config} "
             f"profile={profile_config} run={run_config} opts={rank_opts}"
         )
 
         # -- load script params
         params = load_training_config(
-            default_config=DEFAULT_CONFIG_PATH,
+            default_config=default_config,
             profile_config=profile_config,
             run_config=run_config,
             opts=rank_opts,
         )
         logger.info(
-            f"loaded layered config (default={DEFAULT_CONFIG_PATH} "
+            f"loaded layered config (default={default_config} "
             f"profile={profile_config} run={run_config})"
         )
 
@@ -387,6 +393,7 @@ def process_main(
 
 def launch_worker_processes(
     *,
+    default_config: str,
     profile_config: str,
     run_config: str,
     opts: list[str] | None,
@@ -410,6 +417,7 @@ def launch_worker_processes(
                     visible_devices,
                     master_addr,
                     master_port,
+                    default_config,
                     tuning_device_token,
                 ),
             )
@@ -461,7 +469,8 @@ if __name__ == '__main__':
     if not (args.profile_config and args.run_config):
         raise SystemExit(
             "Provide --profile-config <...> and --run-config <...>. "
-            f"Defaults are always loaded from {DEFAULT_CONFIG_PATH}."
+            "Defaults are selected from pretraining.mode "
+            f"({DEFAULT_CONFIG_BY_MODE['canonical']} or {DEFAULT_CONFIG_BY_MODE['cross_resolution']})."
         )
 
     effective_opts = list(args.opts or [])
@@ -483,8 +492,16 @@ if __name__ == '__main__':
         if not _has_opt(effective_opts, "output.root="):
             effective_opts.append(f"output.root={artifacts['output_root']}")
 
+    selected_mode = infer_pretraining_mode(
+        profile_config=args.profile_config,
+        run_config=args.run_config,
+        opts=effective_opts,
+    )
+    default_config_path = DEFAULT_CONFIG_BY_MODE[selected_mode]
+
     visible_devices = _discover_visible_devices()
     reserved_tuning_device = _resolve_reserved_tuning_device_token(
+        default_config=default_config_path,
         profile_config=args.profile_config,
         run_config=args.run_config,
         opts=effective_opts,
@@ -499,6 +516,7 @@ if __name__ == '__main__':
     mp.set_start_method('spawn')
 
     launch_worker_processes(
+        default_config=default_config_path,
         profile_config=args.profile_config,
         run_config=args.run_config,
         opts=effective_opts,
