@@ -186,21 +186,21 @@ def test_canonical_horizontal_flip_prob_must_be_unit_interval(tmp_path: Path):
         load_training_config(config_file=str(cfg_path))
 
 
-def test_optimization_epochs_equivalent_must_be_positive(tmp_path: Path):
+def test_optimization_epochs_equivalent_is_rejected(tmp_path: Path):
     cfg = _base_cfg()
-    cfg["optimization"]["epochs_equivalent"] = 0
+    cfg["optimization"]["epochs_equivalent"] = 300
     cfg_path = tmp_path / "cfg.yaml"
     _write_yaml(cfg_path, cfg)
 
-    with pytest.raises(ValueError, match="optimization.epochs_equivalent"):
+    with pytest.raises(ValueError, match="Unsupported config value: optimization.epochs_equivalent"):
         load_training_config(config_file=str(cfg_path))
 
 
-def test_optimization_warmup_epochs_must_be_positive(tmp_path: Path):
+def test_optimization_warmup_epochs_is_rejected(tmp_path: Path):
     cfg = _base_cfg()
-    cfg["optimization"]["warmup_epochs"] = -1
+    cfg["optimization"]["warmup_epochs"] = 40
     cfg_path = tmp_path / "cfg.yaml"
     _write_yaml(cfg_path, cfg)
 
-    with pytest.raises(ValueError, match="optimization.warmup_epochs"):
+    with pytest.raises(ValueError, match="Unsupported config value: optimization.warmup_epochs"):
         load_training_config(config_file=str(cfg_path))

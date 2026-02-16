@@ -79,8 +79,6 @@ mask:
 optimization:
   ema: [0.996, 1.0]  # EMA momentum schedule [start, end] over schedule horizon.
   total_images_budget:  # Required image budget (global images seen), no default.
-  epochs_equivalent:  # Optional epoch-equivalent for logging/translation (e.g. 300).
-  warmup_epochs:  # Optional warmup in epoch units; compared against optimization.warmup.
   final_lr: 1.0e-06
   final_weight_decay: 0.1
   ipe_scale: 1.0  # Schedule horizon multiplier: max(total_steps, int(ipe_scale * total_steps)).

@@ -196,6 +196,10 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         raise ValueError("Unsupported config value: data.samples_per_epoch")
     if "epochs" in cfg.get("optimization", {}):
         raise ValueError("Unsupported config value: optimization.epochs")
+    if "epochs_equivalent" in cfg.get("optimization", {}):
+        raise ValueError("Unsupported config value: optimization.epochs_equivalent")
+    if "warmup_epochs" in cfg.get("optimization", {}):
+        raise ValueError("Unsupported config value: optimization.warmup_epochs")
     if "checkpoint_every_epochs" in cfg.get("logging", {}):
         raise ValueError("Unsupported config value: logging.checkpoint_every_epochs")
     if "checkpoint_every_images" in cfg.get("logging", {}):
@@ -294,13 +298,6 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         raise ValueError("Missing required config value: optimization.total_images_budget")
     if int(total_images_budget) <= 0:
         raise ValueError("optimization.total_images_budget must be > 0")
-    optimization_cfg = dict(cfg.get("optimization", {}) or {})
-    epochs_equivalent = optimization_cfg.get("epochs_equivalent", None)
-    if epochs_equivalent is not None and float(epochs_equivalent) <= 0.0:
-        raise ValueError("optimization.epochs_equivalent must be > 0")
-    warmup_epochs = optimization_cfg.get("warmup_epochs", None)
-    if warmup_epochs is not None and float(warmup_epochs) <= 0.0:
-        raise ValueError("optimization.warmup_epochs must be > 0")
 
     if pretraining_mode == "canonical":
         canonical_cfg = dict(cfg.get("canonical", {}) or {})

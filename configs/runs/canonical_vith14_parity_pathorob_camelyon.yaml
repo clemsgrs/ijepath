@@ -3,8 +3,8 @@ pretraining:
 
 data:
   slide_manifest_csv: /data/pathology/projects/clement/discern/multi-center-prostate.csv
-  slide_metadata_parquet: data/3-center-prostate/indexes/slide_metadata.parquet
-  anchor_catalog_manifest: data/3-center-prostate/indexes/anchor_catalog_manifest.json
+  slide_metadata_parquet:
+  anchor_catalog_manifest:
   batch_size_per_gpu: 32
   num_workers: 16
   anchor_stream_batch_size: 2048
@@ -18,9 +18,11 @@ meta:
   load_checkpoint: false
 
 optimization:
-  total_images_budget: 1000000
-  epochs_equivalent: 300
-  warmup_epochs: 40
+  # Upstream I-JEPA ViT-H/14 recipe uses epochs=300 over ImageNet-1k train size (1,281,167 images):
+  # total_images_budget = 300 * 1,281,167 = 384,350,100
+  total_images_budget: 384350100
+  # Upstream warmup=40 epochs, expressed in this repo as warmup fraction:
+  # warmup = 40 / 300 = 0.1333333333
   warmup: 0.1333333333
   ipe_scale: 1.0
   lr: 0.001
@@ -29,6 +31,10 @@ optimization:
   weight_decay: 0.04
   final_weight_decay: 0.4
   ema: [0.996, 1.0]
+
+training:
+  log_every: 10000
+  save_every: 10000
 
 tuning:
   enable: true
@@ -90,10 +96,6 @@ tuning:
     stop_training: false
     save_best_checkpoint: true
     best_checkpoint_name: best-robustness.pth.tar
-
-training:
-  log_every: 10000
-  save_every: 10000
 
 output:
   root: outputs

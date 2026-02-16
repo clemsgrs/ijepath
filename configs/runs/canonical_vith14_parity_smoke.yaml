@@ -11,6 +11,8 @@ meta:
 optimization:
   total_images_budget: 10
   ipe_scale: 1.0
+  # Keep upstream warmup ratio for parity (upstream warmup=40 over epochs=300).
+  # warmup = 40 / 300 = 0.1333333333
   warmup: 0.1333333333
   start_lr: 0.0002
   lr: 0.001

@@ -107,86 +107,6 @@ def resolve_step_log_every_images_with_step_frequency(
     return int(log_freq_steps) * int(global_batch_size)
 
 
-def build_epoch_equivalent_schedule_summary(
-    *,
-    optimization_cfg: dict,
-    anchor_count: int,
-) -> dict[str, float | int | bool | None]:
-    if int(anchor_count) <= 0:
-        raise ValueError("anchor_count must be > 0")
-    total_images_budget = resolve_total_images_budget(optimization_cfg)
-    warmup_fraction = float(optimization_cfg.get("warmup", 0.0))
-    if warmup_fraction < 0.0:
-        raise ValueError("optimization.warmup must be >= 0")
-
-    implied_epochs_from_budget = float(total_images_budget) / float(int(anchor_count))
-    epochs_equivalent_raw = optimization_cfg.get("epochs_equivalent", None)
-    warmup_epochs_raw = optimization_cfg.get("warmup_epochs", None)
-
-    epochs_equivalent = None
-    recommended_total_images_budget = None
-    if epochs_equivalent_raw is not None:
-        epochs_equivalent = float(epochs_equivalent_raw)
-        if epochs_equivalent <= 0.0:
-            raise ValueError("optimization.epochs_equivalent must be > 0")
-        recommended_total_images_budget = int(
-            round(float(epochs_equivalent) * float(int(anchor_count)))
-        )
-
-    warmup_epochs = None
-    recommended_warmup_fraction = None
-    if warmup_epochs_raw is not None:
-        warmup_epochs = float(warmup_epochs_raw)
-        if warmup_epochs <= 0.0:
-            raise ValueError("optimization.warmup_epochs must be > 0")
-        warmup_epoch_base = (
-            float(epochs_equivalent)
-            if epochs_equivalent is not None
-            else float(implied_epochs_from_budget)
-        )
-        if warmup_epoch_base <= 0.0:
-            raise ValueError("warmup epoch base must be > 0")
-        recommended_warmup_fraction = float(warmup_epochs) / float(warmup_epoch_base)
-
-    warmup_fraction_matches_recommendation = None
-    if recommended_warmup_fraction is not None:
-        warmup_fraction_matches_recommendation = bool(
-            math.isclose(
-                float(warmup_fraction),
-                float(recommended_warmup_fraction),
-                rel_tol=0.0,
-                abs_tol=1e-9,
-            )
-        )
-
-    total_images_budget_matches_recommendation = None
-    if recommended_total_images_budget is not None:
-        total_images_budget_matches_recommendation = bool(
-            int(total_images_budget) == int(recommended_total_images_budget)
-        )
-
-    return {
-        "anchor_count": int(anchor_count),
-        "total_images_budget": int(total_images_budget),
-        "implied_epochs_from_budget": float(implied_epochs_from_budget),
-        "warmup_fraction": float(warmup_fraction),
-        "epochs_equivalent": None if epochs_equivalent is None else float(epochs_equivalent),
-        "warmup_epochs": None if warmup_epochs is None else float(warmup_epochs),
-        "recommended_total_images_budget": (
-            None
-            if recommended_total_images_budget is None
-            else int(recommended_total_images_budget)
-        ),
-        "recommended_warmup_fraction": (
-            None
-            if recommended_warmup_fraction is None
-            else float(recommended_warmup_fraction)
-        ),
-        "total_images_budget_matches_recommendation": total_images_budget_matches_recommendation,
-        "warmup_fraction_matches_recommendation": warmup_fraction_matches_recommendation,
-    }
-
-
 def resolve_use_bfloat16(requested_use_bfloat16: bool, cuda_available: bool) -> bool:
     return bool(requested_use_bfloat16 and cuda_available)
 
@@ -1033,38 +953,6 @@ def main(
         or len(getattr(unsupervised_dataset, "anchors", []))
         or len(unsupervised_dataset)
     )
-    epoch_schedule_summary = build_epoch_equivalent_schedule_summary(
-        optimization_cfg=dict(args.get("optimization", {}) or {}),
-        anchor_count=int(anchor_count),
-    )
-    logger.info(
-        "Epoch-equivalent schedule:\n"
-        f" - implied_epochs_from_budget={float(epoch_schedule_summary['implied_epochs_from_budget']):.6f}\n"
-        f" - optimization.epochs_equivalent={epoch_schedule_summary['epochs_equivalent']}\n"
-        f" - recommended_total_images_budget={epoch_schedule_summary['recommended_total_images_budget']}\n"
-        f" - optimization.warmup={float(epoch_schedule_summary['warmup_fraction']):.6f}\n"
-        f" - optimization.warmup_epochs={epoch_schedule_summary['warmup_epochs']}\n"
-        f" - recommended_warmup_fraction={epoch_schedule_summary['recommended_warmup_fraction']}"
-    )
-    if epoch_schedule_summary["total_images_budget_matches_recommendation"] is False:
-        logger.warning(
-            "WARNING! optimization.total_images_budget=%d differs from "
-            "epochs-equivalent recommendation=%d (anchor_count=%d, epochs_equivalent=%s).",
-            int(epoch_schedule_summary["total_images_budget"]),
-            int(epoch_schedule_summary["recommended_total_images_budget"]),
-            int(epoch_schedule_summary["anchor_count"]),
-            str(epoch_schedule_summary["epochs_equivalent"]),
-        )
-    if epoch_schedule_summary["warmup_fraction_matches_recommendation"] is False:
-        logger.warning(
-            "WARNING! optimization.warmup=%.6f differs from warmup-epochs recommendation=%.6f "
-            "(warmup_epochs=%s, epochs_equivalent=%s, implied_epochs_from_budget=%.6f).",
-            float(epoch_schedule_summary["warmup_fraction"]),
-            float(epoch_schedule_summary["recommended_warmup_fraction"]),
-            str(epoch_schedule_summary["warmup_epochs"]),
-            str(epoch_schedule_summary["epochs_equivalent"]),
-            float(epoch_schedule_summary["implied_epochs_from_budget"]),
-        )
     anchor_budget = compute_anchor_pass_budget(
         anchor_count=anchor_count,
         total_images_budget=total_images_budget,
