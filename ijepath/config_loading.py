@@ -267,7 +267,6 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
             ("canonical", "source_tile_size_px"),
             ("canonical", "crop_size_px"),
             ("canonical", "transform_preset"),
-            ("canonical", "mask_preset"),
             ("canonical", "enc_mask_scale"),
             ("canonical", "pred_mask_scale"),
             ("canonical", "aspect_ratio"),
@@ -303,6 +302,8 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
 
     if pretraining_mode == "canonical":
         canonical_cfg = dict(cfg.get("canonical", {}) or {})
+        if "mask_preset" in canonical_cfg:
+            raise ValueError("Unsupported config value: canonical.mask_preset")
         input_mpp = float(canonical_cfg["input_mpp"])
         source_tile_size_px = int(canonical_cfg["source_tile_size_px"])
         crop_size_px = int(canonical_cfg["crop_size_px"])

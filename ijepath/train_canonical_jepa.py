@@ -564,7 +564,6 @@ def main(
     source_tile_size_px = int(canonical_cfg["source_tile_size_px"])
     crop_size_px = int(canonical_cfg["crop_size_px"])
     transform_preset = str(canonical_cfg.get("transform_preset", "official_ijepa"))
-    mask_preset = str(canonical_cfg.get("mask_preset", "official_ijepa_multiblock"))
     crop_scale = tuple(float(x) for x in canonical_cfg.get("crop_scale", (0.3, 1.0)))
     use_horizontal_flip = bool(canonical_cfg.get("use_horizontal_flip", True))
     horizontal_flip_prob = float(canonical_cfg.get("horizontal_flip_prob", 0.5))
@@ -578,11 +577,6 @@ def main(
     num_enc_masks = int(canonical_cfg["num_enc_masks"])
     num_pred_masks = int(canonical_cfg["num_pred_masks"])
     min_keep = int(canonical_cfg["min_keep"])
-    if mask_preset != "official_ijepa_multiblock":
-        raise ValueError(
-            "Unsupported canonical.mask_preset. Expected 'official_ijepa_multiblock', "
-            f"got {mask_preset!r}"
-        )
     model_input_size_px = int(crop_size_px)
 
     # -- OPTIMIZATION

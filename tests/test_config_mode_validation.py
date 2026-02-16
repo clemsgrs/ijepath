@@ -30,7 +30,6 @@ def _base_cfg() -> dict:
             "source_tile_size_px": 256,
             "crop_size_px": 224,
             "transform_preset": "official_ijepa",
-            "mask_preset": "official_ijepa_multiblock",
             "enc_mask_scale": [0.85, 1.0],
             "pred_mask_scale": [0.15, 0.2],
             "aspect_ratio": [0.75, 1.5],
@@ -213,4 +212,15 @@ def test_logging_log_freq_steps_is_rejected(tmp_path: Path):
     _write_yaml(cfg_path, cfg)
 
     with pytest.raises(ValueError, match="Unsupported config value: logging.log_freq_steps"):
+        load_training_config(config_file=str(cfg_path))
+
+
+def test_canonical_mask_preset_is_rejected(tmp_path: Path):
+    cfg = _base_cfg()
+    cfg["pretraining"]["mode"] = "canonical"
+    cfg["canonical"]["mask_preset"] = "official_ijepa_multiblock"
+    cfg_path = tmp_path / "cfg.yaml"
+    _write_yaml(cfg_path, cfg)
+
+    with pytest.raises(ValueError, match="Unsupported config value: canonical.mask_preset"):
         load_training_config(config_file=str(cfg_path))
