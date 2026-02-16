@@ -24,7 +24,6 @@ class CanonicalWSIDataset(CrossResolutionWSIDataset):
         seed: int,
         spacing_tolerance: float = 0.05,
         backend: str = "asap",
-        transform_preset: str = "official_ijepa",
         crop_scale: tuple[float, float] = (0.3, 1.0),
         use_horizontal_flip: bool = True,
         horizontal_flip_prob: float = 0.5,
@@ -42,7 +41,6 @@ class CanonicalWSIDataset(CrossResolutionWSIDataset):
         self.input_mpp = float(input_mpp)
         self.source_tile_size_px = int(source_tile_size_px)
         self.crop_size_px = int(crop_size_px)
-        self.transform_preset = str(transform_preset).strip().lower()
         self.crop_scale = tuple(float(x) for x in crop_scale)
         self.use_horizontal_flip = bool(use_horizontal_flip)
         self.horizontal_flip_prob = float(horizontal_flip_prob)
@@ -84,7 +82,6 @@ class CanonicalWSIDataset(CrossResolutionWSIDataset):
         )
 
         self.image_transform = self._build_transform(
-            preset=self.transform_preset,
             crop_size_px=self.crop_size_px,
             crop_scale=self.crop_scale,
             use_horizontal_flip=self.use_horizontal_flip,
@@ -97,7 +94,6 @@ class CanonicalWSIDataset(CrossResolutionWSIDataset):
     @staticmethod
     def _build_transform(
         *,
-        preset: str,
         crop_size_px: int,
         crop_scale: tuple[float, float],
         use_horizontal_flip: bool,
@@ -106,8 +102,6 @@ class CanonicalWSIDataset(CrossResolutionWSIDataset):
         color_jitter_strength: float,
         use_gaussian_blur: bool,
     ):
-        if preset != "official_ijepa":
-            raise ValueError(f"Unsupported canonical transform preset: {preset!r}")
         steps = [
             transforms.ToPILImage(),
             transforms.RandomResizedCrop(
@@ -198,7 +192,6 @@ class CanonicalWSIDataset(CrossResolutionWSIDataset):
             "source_tile_size_px_at_effective_spacing": int(source_size_px_at_spacing),
             "source_tile_size_px_requested": int(self.source_tile_size_px),
             "model_crop_size_px": int(self.crop_size_px),
-            "transform_preset": str(self.transform_preset),
             "crop_scale_min": float(self.crop_scale[0]),
             "crop_scale_max": float(self.crop_scale[1]),
             "use_horizontal_flip": int(self.use_horizontal_flip),

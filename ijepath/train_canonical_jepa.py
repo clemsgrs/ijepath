@@ -563,7 +563,6 @@ def main(
     input_mpp = float(canonical_cfg["input_mpp"])
     source_tile_size_px = int(canonical_cfg["source_tile_size_px"])
     crop_size_px = int(canonical_cfg["crop_size_px"])
-    transform_preset = str(canonical_cfg.get("transform_preset", "official_ijepa"))
     crop_scale = tuple(float(x) for x in canonical_cfg.get("crop_scale", (0.3, 1.0)))
     use_horizontal_flip = bool(canonical_cfg.get("use_horizontal_flip", True))
     horizontal_flip_prob = float(canonical_cfg.get("horizontal_flip_prob", 0.5))
@@ -761,7 +760,6 @@ def main(
         input_mpp=input_mpp,
         source_tile_size_px=source_tile_size_px,
         crop_size_px=model_input_size_px,
-        transform_preset=transform_preset,
         crop_scale=crop_scale,
         use_horizontal_flip=use_horizontal_flip,
         horizontal_flip_prob=horizontal_flip_prob,

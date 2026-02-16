@@ -120,7 +120,6 @@ def test_canonical_training_with_async_tuning_smoke(monkeypatch, tmp_path: Path)
             "input_mpp": 0.5,
             "source_tile_size_px": 16,
             "crop_size_px": 16,
-            "transform_preset": "official_ijepa",
             "enc_mask_scale": [0.85, 1.0],
             "pred_mask_scale": [0.15, 0.2],
             "aspect_ratio": [0.75, 1.5],

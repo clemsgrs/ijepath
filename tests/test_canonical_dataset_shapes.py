@@ -84,7 +84,6 @@ def test_canonical_dataset_shapes(tmp_path: Path):
         seed=0,
         spacing_tolerance=0.05,
         backend="openslide",
-        transform_preset="official_ijepa",
     )
 
     sample = dataset[0]

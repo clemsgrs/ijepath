@@ -194,20 +194,12 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
         raise ValueError("Unsupported config value: data.samples_per_chunk")
     if "samples_per_epoch" in cfg.get("data", {}):
         raise ValueError("Unsupported config value: data.samples_per_epoch")
-    if "epochs" in cfg.get("optimization", {}):
-        raise ValueError("Unsupported config value: optimization.epochs")
-    if "epochs_equivalent" in cfg.get("optimization", {}):
-        raise ValueError("Unsupported config value: optimization.epochs_equivalent")
-    if "warmup_epochs" in cfg.get("optimization", {}):
-        raise ValueError("Unsupported config value: optimization.warmup_epochs")
     if "checkpoint_every_epochs" in cfg.get("logging", {}):
         raise ValueError("Unsupported config value: logging.checkpoint_every_epochs")
     if "checkpoint_every_images" in cfg.get("logging", {}):
         raise ValueError("Unsupported config value: logging.checkpoint_every_images")
     if "step_log_every_iters" in cfg.get("logging", {}):
         raise ValueError("Unsupported config value: logging.step_log_every_iters")
-    if "log_freq_steps" in cfg.get("logging", {}):
-        raise ValueError("Unsupported config value: logging.log_freq_steps")
     if "folder" in cfg.get("logging", {}):
         raise ValueError("Unsupported config value: logging.folder (use output.root)")
     if "log_every_images" in cfg.get("wandb", {}):
@@ -266,7 +258,6 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
             ("canonical", "input_mpp"),
             ("canonical", "source_tile_size_px"),
             ("canonical", "crop_size_px"),
-            ("canonical", "transform_preset"),
             ("canonical", "enc_mask_scale"),
             ("canonical", "pred_mask_scale"),
             ("canonical", "aspect_ratio"),
@@ -302,8 +293,6 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
 
     if pretraining_mode == "canonical":
         canonical_cfg = dict(cfg.get("canonical", {}) or {})
-        if "mask_preset" in canonical_cfg:
-            raise ValueError("Unsupported config value: canonical.mask_preset")
         input_mpp = float(canonical_cfg["input_mpp"])
         source_tile_size_px = int(canonical_cfg["source_tile_size_px"])
         crop_size_px = int(canonical_cfg["crop_size_px"])

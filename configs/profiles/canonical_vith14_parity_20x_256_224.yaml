@@ -15,7 +15,6 @@ canonical:
   input_mpp: 0.5
   source_tile_size_px: 256
   crop_size_px: 224
-  transform_preset: official_ijepa
   crop_scale: [0.85, 1.0]
   use_horizontal_flip: false
   horizontal_flip_prob: 0.5
