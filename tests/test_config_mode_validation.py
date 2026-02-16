@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ijepath.config_loading import load_training_config
+from ijepath.config_loading import infer_pretraining_mode, load_training_config
 
 
 def _write_yaml(path: Path, payload: dict) -> None:
@@ -193,3 +193,45 @@ def test_canonical_horizontal_flip_prob_must_be_unit_interval(tmp_path: Path):
 
     with pytest.raises(ValueError, match="canonical.horizontal_flip_prob"):
         load_training_config(config_file=str(cfg_path))
+
+
+def test_infer_pretraining_mode_prefers_opts_over_run_and_profile(tmp_path: Path):
+    profile_path = tmp_path / "profile.yaml"
+    run_path = tmp_path / "run.yaml"
+    _write_yaml(profile_path, {"pretraining": {"mode": "cross_resolution"}})
+    _write_yaml(run_path, {"pretraining": {"mode": "cross_resolution"}})
+
+    mode = infer_pretraining_mode(
+        profile_config=str(profile_path),
+        run_config=str(run_path),
+        opts=["pretraining.mode=canonical"],
+    )
+    assert mode == "canonical"
+
+
+def test_infer_pretraining_mode_uses_run_before_profile(tmp_path: Path):
+    profile_path = tmp_path / "profile.yaml"
+    run_path = tmp_path / "run.yaml"
+    _write_yaml(profile_path, {"pretraining": {"mode": "cross_resolution"}})
+    _write_yaml(run_path, {"pretraining": {"mode": "canonical"}})
+
+    mode = infer_pretraining_mode(
+        profile_config=str(profile_path),
+        run_config=str(run_path),
+        opts=[],
+    )
+    assert mode == "canonical"
+
+
+def test_infer_pretraining_mode_errors_when_missing_everywhere(tmp_path: Path):
+    profile_path = tmp_path / "profile.yaml"
+    run_path = tmp_path / "run.yaml"
+    _write_yaml(profile_path, {"x": 1})
+    _write_yaml(run_path, {"y": 2})
+
+    with pytest.raises(ValueError, match="Unable to infer pretraining.mode"):
+        infer_pretraining_mode(
+            profile_config=str(profile_path),
+            run_config=str(run_path),
+            opts=[],
+        )

@@ -116,7 +116,9 @@ CUDA_VISIBLE_DEVICES=0,1 python main.py \
 # - For non-main.py multi-process launches (e.g. SLURM), set MASTER_PORT
 #   or pass --master-port to main_distributed.py.
 
-# defaults config is implicit: configs/defaults.yaml
+# defaults config is selected from pretraining.mode:
+# - canonical -> configs/defaults_canonical.yaml
+# - cross_resolution -> configs/defaults_cross_resolution.yaml
 # mode is REQUIRED in run config via pretraining.mode (no implicit default)
 
 # Merged resolved config is saved automatically to:

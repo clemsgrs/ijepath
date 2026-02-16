@@ -32,14 +32,6 @@ from ijepath.utils.log_utils import setup_logging
 from ijepath.masks.utils import apply_masks
 from ijepath.utils.tensors import repeat_interleave_batch
 
-default_training_save_every = 1_000_000
-default_step_log_every_images = 0
-default_training_log_every = 100_000
-default_tune_every_images = 1_000_000
-default_perf_debug_log_every_images = 2_048
-default_perf_debug_slow_step_ms = 250.0
-default_perf_debug_slow_data_wait_ms = 50.0
-
 _GLOBAL_SEED = 0
 np.random.seed(_GLOBAL_SEED)
 torch.manual_seed(_GLOBAL_SEED)
@@ -69,7 +61,7 @@ def flatten_teacher_tokens_for_predictor_order(
 
 
 def resolve_step_log_every_images(logging_cfg: dict, total_images_budget: int) -> int:
-    raw_value = logging_cfg.get("step_log_every_images", default_step_log_every_images)
+    raw_value = logging_cfg["step_log_every_images"]
     if isinstance(raw_value, bool):
         raise ValueError("logging.step_log_every_images must be int>=0 or float in [0, 1]")
     if isinstance(raw_value, int):
@@ -91,25 +83,25 @@ def resolve_use_bfloat16(requested_use_bfloat16: bool, cuda_available: bool) -> 
 
 
 def resolve_training_save_every(training_cfg: dict) -> int:
-    interval = int(training_cfg.get("save_every", default_training_save_every))
+    interval = int(training_cfg["save_every"])
     if interval <= 0:
         raise ValueError("training.save_every must be > 0")
     return interval
 
 
 def resolve_training_log_every(training_cfg: dict) -> int:
-    interval = int(training_cfg.get("log_every", default_training_log_every))
+    interval = int(training_cfg["log_every"])
     if interval <= 0:
         raise ValueError("training.log_every must be > 0")
     return interval
 
 
 def resolve_performance_debug_config(logging_cfg: dict) -> dict[str, float | int | bool]:
-    perf_cfg = dict(logging_cfg.get("performance_debug", {}) or {})
+    perf_cfg = dict(logging_cfg["performance_debug"] or {})
     enabled = bool(perf_cfg.get("enable", False))
-    log_every_images = int(perf_cfg.get("log_every_images", default_perf_debug_log_every_images))
-    slow_step_ms = float(perf_cfg.get("slow_step_ms", default_perf_debug_slow_step_ms))
-    slow_data_wait_ms = float(perf_cfg.get("slow_data_wait_ms", default_perf_debug_slow_data_wait_ms))
+    log_every_images = int(perf_cfg["log_every_images"])
+    slow_step_ms = float(perf_cfg["slow_step_ms"])
+    slow_data_wait_ms = float(perf_cfg["slow_data_wait_ms"])
     if enabled:
         if log_every_images <= 0:
             raise ValueError("logging.performance_debug.log_every_images must be > 0")
@@ -591,10 +583,7 @@ def main(
 
     # -- LOGGING
     tag = args["logging"]["write_tag"]
-    step_log_every_images_raw = args["logging"].get(
-        "step_log_every_images",
-        default_step_log_every_images,
-    )
+    step_log_every_images_raw = args["logging"]["step_log_every_images"]
     training_cfg = dict(args.get("training", {}) or {})
     training_save_every = resolve_training_save_every(training_cfg)
     training_log_every = resolve_training_log_every(training_cfg)
@@ -896,7 +885,7 @@ def main(
 
     tuning_cfg = dict(args.get("tuning", {}) or {})
     tuning_enabled_cfg = bool(tuning_cfg.get("enable", False))
-    tune_every_images = int(tuning_cfg.get("tune_every", default_tune_every_images))
+    tune_every_images = int(tuning_cfg["tune_every"])
     if tuning_enabled_cfg and tune_every_images <= 0:
         raise ValueError("tuning.tune_every must be > 0")
     run_baseline_at_zero = bool(tuning_cfg.get("run_baseline_at_zero", True))

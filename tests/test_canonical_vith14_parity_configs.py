@@ -12,7 +12,7 @@ def _repo_root() -> Path:
 def test_canonical_vith14_parity_smoke_config_resolves_expected_values():
     repo_root = _repo_root()
     cfg = load_training_config(
-        default_config=str(repo_root / "configs/defaults.yaml"),
+        default_config=str(repo_root / "configs/defaults_canonical.yaml"),
         profile_config=str(
             repo_root / "configs/profiles/canonical_vith14_parity_20x_256_224.yaml"
         ),
@@ -43,7 +43,7 @@ def test_canonical_vith14_parity_smoke_config_resolves_expected_values():
 def test_canonical_vith14_parity_run_uses_absolute_budget_and_warmup_ratio():
     repo_root = _repo_root()
     cfg = load_training_config(
-        default_config=str(repo_root / "configs/defaults.yaml"),
+        default_config=str(repo_root / "configs/defaults_canonical.yaml"),
         profile_config=str(
             repo_root / "configs/profiles/canonical_vith14_parity_20x_256_224.yaml"
         ),

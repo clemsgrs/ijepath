@@ -9,16 +9,21 @@ import argparse
 import logging
 import os
 import re
+from pathlib import Path
 
 import submitit
 
-from ijepath.config_loading import load_training_config
+from ijepath.config_loading import infer_pretraining_mode, load_training_config
 from ijepath.train import main as app_main
 from ijepath.utils.log_utils import setup_logging
 
 logger = logging.getLogger("ijepath")
 
-DEFAULT_CONFIG_PATH = "configs/defaults.yaml"
+_REPO_ROOT = Path(__file__).resolve().parent
+DEFAULT_CONFIG_BY_MODE = {
+    "canonical": str(_REPO_ROOT / "configs" / "defaults_canonical.yaml"),
+    "cross_resolution": str(_REPO_ROOT / "configs" / "defaults_cross_resolution.yaml"),
+}
 
 
 parser = argparse.ArgumentParser()
@@ -69,13 +74,16 @@ def _validate_master_port(value: str | int) -> int:
 
 def _resolve_distributed_gpu_request(
     *,
+    default_config: str | None = None,
     profile_config: str,
     run_config: str,
     opts: list[str] | None,
     tasks_per_node: int,
 ) -> int:
+    if default_config is None:
+        default_config = DEFAULT_CONFIG_BY_MODE["cross_resolution"]
     params = load_training_config(
-        default_config=DEFAULT_CONFIG_PATH,
+        default_config=default_config,
         profile_config=profile_config,
         run_config=run_config,
         opts=opts,
@@ -107,12 +115,14 @@ class Trainer:
         self,
         profile_config=None,
         run_config=None,
+        default_config=None,
         opts=None,
         load_model=None,
         master_port=None,
     ):
         self.profile_config = profile_config
         self.run_config = run_config
+        self.default_config = default_config
         self.opts = list(opts or [])
         self.load_model = load_model
         self.master_port = master_port
@@ -138,20 +148,23 @@ class Trainer:
 
         setup_logging(level=logging.INFO)
         try:
+            default_config = self.default_config
+            if default_config is None:
+                default_config = DEFAULT_CONFIG_BY_MODE["cross_resolution"]
             logger.info(
-                f"called-params default={DEFAULT_CONFIG_PATH} "
+                f"called-params default={default_config} "
                 f"profile={self.profile_config} run={self.run_config} opts={self.opts}"
             )
 
             # -- load script params
             params = load_training_config(
-                default_config=DEFAULT_CONFIG_PATH,
+                default_config=default_config,
                 profile_config=self.profile_config,
                 run_config=self.run_config,
                 opts=self.opts,
             )
             logger.info(
-                f"loaded layered config (default={DEFAULT_CONFIG_PATH} "
+                f"loaded layered config (default={default_config} "
                 f"profile={self.profile_config} run={self.run_config})"
             )
 
@@ -160,7 +173,7 @@ class Trainer:
         except BaseException:
             logger.exception(
                 "Training entrypoint crashed with unhandled exception (default=%s profile=%s run=%s opts=%s)",
-                DEFAULT_CONFIG_PATH,
+                default_config,
                 self.profile_config,
                 self.run_config,
                 self.opts,
@@ -171,6 +184,7 @@ class Trainer:
         fb_trainer = Trainer(
             self.profile_config,
             self.run_config,
+            self.default_config,
             self.opts,
             True,
             self.master_port,
@@ -182,10 +196,19 @@ def launch():
     if not (args.profile_config and args.run_config):
         raise SystemExit(
             "Provide --profile-config <...> and --run-config <...>. "
-            f"Defaults are always loaded from {DEFAULT_CONFIG_PATH}."
+            "Defaults are selected from pretraining.mode "
+            f"({DEFAULT_CONFIG_BY_MODE['canonical']} or {DEFAULT_CONFIG_BY_MODE['cross_resolution']})."
         )
 
+    selected_mode = infer_pretraining_mode(
+        profile_config=args.profile_config,
+        run_config=args.run_config,
+        opts=args.opts,
+    )
+    default_config_path = DEFAULT_CONFIG_BY_MODE[selected_mode]
+
     gpus_per_node = _resolve_distributed_gpu_request(
+        default_config=default_config_path,
         profile_config=args.profile_config,
         run_config=args.run_config,
         opts=args.opts,
@@ -193,7 +216,7 @@ def launch():
     )
     launch_opts = list(args.opts or [])
     params_for_launch = load_training_config(
-        default_config=DEFAULT_CONFIG_PATH,
+        default_config=default_config_path,
         profile_config=args.profile_config,
         run_config=args.run_config,
         opts=launch_opts,
@@ -223,6 +246,7 @@ def launch():
         fb_trainer = Trainer(
             profile_config=args.profile_config,
             run_config=args.run_config,
+            default_config=default_config_path,
             opts=launch_opts,
             master_port=args.master_port,
         )

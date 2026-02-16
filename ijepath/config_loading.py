@@ -4,6 +4,8 @@ from typing import Any
 
 from omegaconf import OmegaConf
 
+_VALID_PRETRAINING_MODES = {"canonical", "cross_resolution"}
+
 _EARLY_STOPPING_METRIC_MODES: dict[str, dict[str, str]] = {
     "pathorob": {
         "ri": "max",
@@ -13,6 +15,70 @@ _EARLY_STOPPING_METRIC_MODES: dict[str, dict[str, str]] = {
         "apd_avg": "min",
     }
 }
+
+
+def _normalize_pretraining_mode(raw_mode: Any) -> str:
+    mode = str(raw_mode).strip().lower()
+    if mode not in _VALID_PRETRAINING_MODES:
+        raise ValueError(
+            "pretraining.mode must be one of {'canonical', 'cross_resolution'}, "
+            f"got {raw_mode!r}"
+        )
+    return mode
+
+
+def _extract_pretraining_mode_from_mapping(payload: dict[str, Any]) -> str | None:
+    pretraining_cfg = dict(payload.get("pretraining", {}) or {})
+    raw_mode = pretraining_cfg.get("mode", None)
+    if raw_mode is None or not str(raw_mode).strip():
+        return None
+    return _normalize_pretraining_mode(raw_mode)
+
+
+def _extract_pretraining_mode_from_config_file(path: str | None) -> str | None:
+    if path is None:
+        return None
+    cfg = OmegaConf.load(path)
+    container = OmegaConf.to_container(cfg, resolve=False)
+    if not isinstance(container, dict):
+        return None
+    return _extract_pretraining_mode_from_mapping(container)
+
+
+def _extract_pretraining_mode_from_opts(opts: Sequence[str] | None) -> str | None:
+    mode_value: str | None = None
+    for opt in list(opts or []):
+        token = str(opt)
+        if token.startswith("pretraining.mode="):
+            mode_value = token.split("=", 1)[1]
+    if mode_value is None or not str(mode_value).strip():
+        return None
+    return _normalize_pretraining_mode(mode_value)
+
+
+def infer_pretraining_mode(
+    *,
+    profile_config: str | None,
+    run_config: str | None,
+    opts: Sequence[str] | None,
+) -> str:
+    mode = _extract_pretraining_mode_from_opts(opts)
+    if mode is not None:
+        return mode
+
+    mode = _extract_pretraining_mode_from_config_file(run_config)
+    if mode is not None:
+        return mode
+
+    mode = _extract_pretraining_mode_from_config_file(profile_config)
+    if mode is not None:
+        return mode
+
+    raise ValueError(
+        "Unable to infer pretraining.mode for defaults selection. "
+        "Set pretraining.mode in --run-config (preferred), --profile-config, "
+        "or CLI opts (e.g., pretraining.mode=canonical)."
+    )
 
 
 def load_training_config(
@@ -211,12 +277,7 @@ def _validate_training_config(cfg: dict[str, Any]) -> None:
     pretraining_mode_raw = pretraining_cfg.get("mode", None)
     if pretraining_mode_raw is None or not str(pretraining_mode_raw).strip():
         raise ValueError("Missing required config value: pretraining.mode")
-    pretraining_mode = str(pretraining_mode_raw).strip().lower()
-    if pretraining_mode not in {"canonical", "cross_resolution"}:
-        raise ValueError(
-            "pretraining.mode must be one of {'canonical', 'cross_resolution'}, "
-            f"got {pretraining_mode_raw!r}"
-        )
+    pretraining_mode = _normalize_pretraining_mode(pretraining_mode_raw)
     pretraining_cfg["mode"] = pretraining_mode
     cfg["pretraining"] = pretraining_cfg
 

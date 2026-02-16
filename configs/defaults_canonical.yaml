@@ -1,0 +1,143 @@
+pretraining:
+  mode: canonical
+
+data:
+  # -- Runtime and loading
+  batch_size_per_gpu: 32  # global_batch_size = batch_size_per_gpu * world_size.
+  pin_mem: true
+  num_workers: 16
+  seed: 0
+  wsi_backend: asap  # backend for wholeslidedata reader
+
+  # -- Required paths (override in run config)
+  slide_manifest_csv:
+  slide_metadata_parquet:
+  anchor_catalog_manifest:
+  sampling_strategy: stratified_weighted  # global_uniform | stratified_weighted
+  sampling_stratum_key: organ
+  sampling_stratum_weights: inverse_frequency  # inverse_frequency | uniform | {"stratum": weight}
+  persistent_workers: true
+  prefetch_factor: 4
+  max_open_slides_per_worker: 16
+  anchor_stream_batch_size: 2048  # Parquet rows decoded per reader batch; larger values reduce rollover frequency.
+
+  # -- Cross-resolution geometry (override in profile config)
+  # Final model tensor sizes are derived as nearest multiples of meta.patch_size:
+  # context_px = snap(round(context_fov_um / context_mpp), patch_size)
+  # target_px = snap(round(target_fov_um / target_mpp), patch_size)
+  context_mpp:
+  target_mpp:
+  context_fov_um:
+  target_fov_um:
+  targets_per_context:
+
+  # -- Tissue-aware target sampling
+  min_target_tissue_fraction: 0.25
+  insufficient_target_policy: skip_anchor  # skip_anchor | skip_slide | lower_threshold
+  min_target_tissue_fraction_floor: 0.10  # Used only when policy=lower_threshold.
+  min_target_tissue_fraction_step: 0.05  # Decrement step for lower_threshold.
+  align_targets_to_patch_grid: false  # If true, sampled target boxes snap to patch-grid coordinates.
+
+  # -- Spacing handling
+  spacing_tolerance: 0.05  # Relative tolerance for near-native spacing matching.
+  low_anchor_pass_warning_threshold: 1.0  # Warn when total budget covers less than one full anchor pass.
+  high_anchor_pass_warning_threshold: 5.0  # Warn when anchors are expected to be reused heavily.
+
+canonical:
+  input_mpp: 0.5
+  source_tile_size_px: 256
+  crop_size_px: 224
+  crop_scale: [0.3, 1.0]
+  use_horizontal_flip: true
+  horizontal_flip_prob: 0.5
+  use_color_distortion: false
+  color_jitter_strength: 0.0
+  use_gaussian_blur: false
+  allow_overlap: false
+  enc_mask_scale: [0.85, 1.0]
+  pred_mask_scale: [0.15, 0.2]
+  aspect_ratio: [0.75, 1.5]
+  num_enc_masks: 1
+  num_pred_masks: 4
+  min_keep: 16
+
+meta:
+  load_checkpoint: false
+  architecture: vit_small
+  patch_size: 16  # ViT patch size used by encoder, predictor geometry, and mask tokenization.
+  pred_depth: 3
+  pred_emb_dim: 192
+  read_checkpoint:
+  use_bfloat16: true
+
+mask:
+  num_enc_masks: 1
+  num_pred_masks:  # Should match data.targets_per_context.
+  min_keep: 16
+
+optimization:
+  ema: [0.996, 1.0]  # EMA momentum schedule [start, end] over schedule horizon.
+  total_images_budget:  # Required image budget (global images seen), no default.
+  final_lr: 1.0e-06
+  final_weight_decay: 0.1
+  ipe_scale: 1.0  # Schedule horizon multiplier: max(total_steps, int(ipe_scale * total_steps)).
+  lr: 0.0002
+  start_lr: 0.00002
+  warmup: 0.1  # Warmup fraction of total_steps (warmup_steps=int(warmup * total_steps)).
+  weight_decay: 0.04
+
+training:
+  log_every: 100000  # Log train metrics every N images seen.
+  save_every: 1000000  # Save numbered checkpoint every N images seen (overridden by tuning.tune_every when tuning.enable=true).
+
+tuning:
+  enable: false
+  seed: 0
+  tune_every: 1000000  # Run tuner every N global images seen.
+  run_baseline_at_zero: true
+  execution:
+    mode: async  # Only supported mode; tuning runs asynchronously from rank-0 training loop.
+    device: auto  # auto = reserve one visible GPU for tuning; or set cuda:<id> explicitly.
+    max_pending_jobs: 2  # Max queued eval snapshots before coalescing/dropping kicks in.
+    coalesce_policy: newest  # Keep newest requests under backlog pressure (drop older queued evals).
+    poll_every_steps: auto  # Auto = round(tune_every / (global_batch_size * 20)); set int to override.
+    fail_on_backlog: false  # If true, raise when queue is full instead of dropping stale queued evals.
+    keep_last_n_snapshots: 2  # Keep at most N evaluator snapshot files on disk.
+  # PathoROB plugin knobs are configured under tuning.plugins[*], including:
+  # - feature_num_workers / feature_persistent_workers / feature_prefetch_factor
+  # - ri.every_n_evals / apd.every_n_evals / clustering.every_n_evals
+  plugins: []
+  early_stopping:
+    enable: false
+    selection:
+      plugin: null
+      dataset: null
+      metric: null
+    patience_evals: 5  # Stop after this many non-improving tuning runs.
+    min_evals: 3  # Minimum number of tuning runs before stop condition is allowed.
+    stop_training: false  # If true, terminate JEPA training once the early-stopping criterion is met.
+    save_best_checkpoint: true
+    best_checkpoint_name: best-robustness.pth.tar
+
+output:
+  root: outputs  # Base output root; run artifacts default to <root>/runs/<run_id>.
+  shared_cache_root: ${output.root}/cache  # Reusable cross-run cache (e.g., PathoROB APD split cache).
+
+logging:
+  write_tag: jepa
+  step_log_every_images: 0  # int images or float fraction in [0,1] (e.g. 10000 or 0.1); 0 disables cadence logs; "10%" is invalid.
+  performance_debug:
+    enable: false  # Opt-in step timing breakdown logs (data wait, H2D transfer, compute, tune poll, overhead).
+    log_every_images: 2048  # Emit rolling performance summary every N images seen.
+    slow_step_ms: 250.0  # Emit immediate spike logs when end-to-end step loop exceeds this threshold.
+    slow_data_wait_ms: 50.0  # Emit immediate spike logs when DataLoader wait exceeds this threshold.
+
+wandb:
+  enable: false
+  project: ijepath
+  username: "clemsg"
+  exp_name: "ijepath"
+  tags: ["ijepath", "${meta.architecture}", "${data.context_fov_um}-to-${data.target_fov_um}"]
+  dir: /tmp/wandb
+  group:
+  resume_id:
