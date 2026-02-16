@@ -46,6 +46,12 @@ def load_slide_index(path: Path) -> list[dict]:
 
 def load_profile(path: Path):
     profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if "anchor_stride_fraction" in profile:
+        raise ValueError(
+            "Unsupported profile key: anchor_stride_fraction "
+            "(use anchor_overlap_fraction instead)"
+        )
+
     required_keys = [
         "profile_id",
         "context_mpp",
@@ -54,13 +60,20 @@ def load_profile(path: Path):
         "target_fov_um",
         "targets_per_context",
         "min_tissue_fraction",
-        "anchor_stride_fraction",
+        "anchor_overlap_fraction",
         "target_margin_um",
         "spacing_tolerance",
     ]
     for key in required_keys:
         if key not in profile:
             raise ValueError(f"Missing required profile key: {key}")
+
+    overlap = float(profile["anchor_overlap_fraction"])
+    if float(overlap) < 0.0 or float(overlap) >= 1.0:
+        raise ValueError("anchor_overlap_fraction must be in [0, 1.0)")
+    stride_fraction = 1.0 - float(overlap)
+    if float(stride_fraction) <= 0.0:
+        raise ValueError("Derived anchor stride fraction must be > 0")
     return profile
 
 
@@ -139,7 +152,7 @@ def _process_slide_worker(
     target_fov_um = float(profile["target_fov_um"])
     targets_per_context = int(profile["targets_per_context"])
     min_tissue_fraction = float(profile["min_tissue_fraction"])
-    anchor_stride_fraction = float(profile["anchor_stride_fraction"])
+    anchor_overlap_fraction = float(profile["anchor_overlap_fraction"])
     target_margin_um = float(profile["target_margin_um"])
     spacing_tolerance = float(profile["spacing_tolerance"])
     profile_id = str(profile["profile_id"])
@@ -173,7 +186,7 @@ def _process_slide_worker(
 
     context_size_mask_px = max(1, int(round(context_fov_um / mask_spacing0)))
     half_mask = context_size_mask_px // 2
-    stride_mask = max(1, int(round(context_size_mask_px * anchor_stride_fraction)))
+    stride_mask = max(1, int(round(context_size_mask_px * (1.0 - anchor_overlap_fraction))))
 
     anchors_dir_path = Path(anchors_dir)
     slide_prefix = _sanitize_slide_id(slide_id)
@@ -257,6 +270,7 @@ def _process_slide_worker(
                     "target_margin_context_px": target_margin_context_px,
                     "context_size_px": context_size_px,
                     "target_size_context_px": target_size_context_px,
+                    "anchor_overlap_fraction": float(anchor_overlap_fraction),
                     "spacing_tolerance": spacing_tolerance,
                 }
             )

@@ -14,7 +14,7 @@ targets_per_context: null  # Default in defaults.yaml: null (must be provided by
 
 # Anchor candidate generation / validity.
 min_tissue_fraction: 0.2  # Default profile value used by indexing.
-anchor_stride_fraction: 0.5  # Default profile value used by indexing.
+anchor_overlap_fraction: 0.5  # Overlap between neighboring context windows (0=no overlap, 0.5=50% overlap).
 target_margin_um: 16.0  # Default profile value used by indexing.
 
 # Spacing matching and deterministic behavior.

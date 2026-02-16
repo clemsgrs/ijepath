@@ -10,6 +10,12 @@ import pytest
 if importlib.util.find_spec("pyarrow") is None:
     pytest.skip("pyarrow is required for parquet pipeline tests", allow_module_level=True)
 
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "build_valid_context_anchor_catalog.py"
+_SPEC = importlib.util.spec_from_file_location("anchor_builder_script", SCRIPT_PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+_MOD = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MOD)
+
 
 def test_pathology_valid_context_anchor_catalog_builder_smoke(tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
@@ -64,7 +70,7 @@ def test_pathology_valid_context_anchor_catalog_builder_smoke(tmp_path):
                 "target_fov_um: 128.0",
                 "targets_per_context: 4",
                 "min_tissue_fraction: 0.2",
-                "anchor_stride_fraction: 0.5",
+                "anchor_overlap_fraction: 0.5",
                 "target_margin_um: 16.0",
                 "spacing_tolerance: 0.05",
                 "seed: 0",
@@ -109,3 +115,28 @@ def test_pathology_valid_context_anchor_catalog_builder_smoke(tmp_path):
     assert float(row["target_mpp"]) == 0.5
     assert float(row["tissue_fraction"]) >= 0.2
     assert int(row["is_in_bounds"]) == 1
+
+
+def test_anchor_builder_rejects_legacy_anchor_stride_key(tmp_path: Path):
+    profile_yaml = tmp_path / "profile_legacy.yaml"
+    profile_yaml.write_text(
+        "\n".join(
+            [
+                "profile_id: legacy",
+                "context_mpp: 1.0",
+                "target_mpp: 0.5",
+                "context_fov_um: 512.0",
+                "target_fov_um: 128.0",
+                "targets_per_context: 4",
+                "min_tissue_fraction: 0.2",
+                "anchor_stride_fraction: 0.5",
+                "target_margin_um: 16.0",
+                "spacing_tolerance: 0.05",
+                "seed: 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="anchor_stride_fraction"):
+        _MOD.load_profile(profile_yaml)
