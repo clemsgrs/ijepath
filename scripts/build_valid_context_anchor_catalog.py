@@ -217,7 +217,8 @@ def _process_slide_worker(
 
     downsample_level = adapter.get_best_level_for_downsample_custom(downsample)
     downsample_spacing = adapter.wsi_spacings[downsample_level]
-    mask_spacing, _ = adapter.get_best_level_for_spacing(downsample_spacing, tolerance=spacing_tolerance, use_mask=True)
+    mask_level, _ = adapter.get_best_level_for_spacing(downsample_spacing, tolerance=spacing_tolerance, use_mask=True)
+    mask_spacing = adapter.mask_spacings[mask_level]
     context_size_mask_px_at_spacing = max(1, int(round(context_fov_um / mask_spacing)))
      
     mask_spacing0 = float(slide["mask_level0_spacing_mpp"])
