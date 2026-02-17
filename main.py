@@ -70,6 +70,7 @@ _ANCHOR_PROFILE_KEYS = (
     "anchor_overlap_fraction",
     "target_margin_um",
     "spacing_tolerance",
+    "downsample",
 )
 
 
