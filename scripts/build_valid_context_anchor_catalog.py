@@ -260,7 +260,7 @@ def _process_slide_worker(
             if x0 < 0 or y0 < 0 or x1 > mask_w or y1 > mask_h:
                 continue
 
-            mask_patch = adapter.get_patch_by_center_level0(
+            mask_patch = adapter.get_patch_by_center(
                 center_x_level0=int(cx_mask),
                 center_y_level0=int(cy_mask),
                 width_pixels_at_spacing=context_size_mask_px,

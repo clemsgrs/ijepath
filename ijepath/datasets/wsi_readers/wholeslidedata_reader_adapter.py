@@ -123,6 +123,48 @@ class WholeSlideDataReaderAdapter:
             level0_width=int(w0),
             level0_height=int(h0),
         )
+    
+    def get_downsamples(
+        self,
+        use_mask: bool = False,
+     ) -> list[Tuple[float, float]]:
+        """
+        Calculate the downsample factors for each level of the image pyramid.
+
+        This method computes the downsample factors for each level in the image
+        pyramid relative to the base level (level 0). The downsample factor for
+        each level is represented as a tuple of two values, corresponding to the
+        downsampling in the width and height dimensions.
+
+        Returns:
+            list of tuple: A list of tuples where each tuple contains two float
+            values representing the downsample factors (width_factor, height_factor)
+            for each level relative to the base level.
+        """
+        level_downsamples = []
+        dim_0 = self.mask_shapes[0] if use_mask else self.wsi_shapes[0]
+        for dim in (self.mask_shapes if use_mask else self.wsi_shapes):
+            level_downsample = (dim_0[0] / float(dim[0]), dim_0[1] / float(dim[1]))
+            level_downsamples.append(level_downsample)
+        return level_downsamples
+
+    def get_best_level_for_downsample_custom(
+        self,
+        downsample: int,
+        use_mask: bool = False,
+    ) -> int:
+        """
+        Determines the best level for a given downsample factor based on the available
+        level downsample values.
+
+        Args:
+            downsample (float): Target downsample factor.
+
+        Returns:
+            int: Index of the best matching level for the given downsample factor.
+        """
+        level = int(np.argmin([abs(x - downsample) for x, _ in self.get_downsamples(use_mask=use_mask)]))
+        return level
 
     def get_best_level_for_spacing(
         self,
@@ -167,7 +209,7 @@ class WholeSlideDataReaderAdapter:
         out[:h, :w] = patch[:h, :w]
         return out
 
-    def get_patch_by_center_level0(
+    def get_patch_by_center(
         self,
         center_x_level0: int,
         center_y_level0: int,
@@ -177,7 +219,6 @@ class WholeSlideDataReaderAdapter:
         use_mask: bool = False,
         center_is_wsi_level0: bool = False,
     ) -> np.ndarray:
-        spacing_at_level0 = self.mask_spacings[0] if use_mask else self.wsi_spacings[0]
         center_x_source_level0 = int(center_x_level0)
         center_y_source_level0 = int(center_y_level0)
         if use_mask and center_is_wsi_level0:
@@ -187,23 +228,16 @@ class WholeSlideDataReaderAdapter:
             center_x_source_level0 = int(round(center_x_level0 * scale_wsi_to_mask))
             center_y_source_level0 = int(round(center_y_level0 * scale_wsi_to_mask))
 
-        x0, y0, _, _ = context_box_from_center_level0(
-            center_x_level0=center_x_source_level0,
-            center_y_level0=center_y_source_level0,
-            size_pixels_at_spacing=width_pixels_at_spacing,
-            spacing=spacing_mpp,
-            spacing_at_level0=spacing_at_level0,
-        )
         source = self.mask if use_mask else self.wsi
         if source is None:
             raise ValueError("Mask is not available")
         patch = source.get_patch(
-            int(x0),
-            int(y0),
-            int(width_pixels_at_spacing),
-            int(height_pixels_at_spacing),
-            spacing=float(spacing_mpp),
-            center=False,
+            center_x_source_level0,
+            center_y_source_level0,
+            width_pixels_at_spacing,
+            height_pixels_at_spacing,
+            spacing=spacing_mpp,
+            center=True,
         )
         return self._ensure_patch_shape(np.asarray(patch), width_pixels_at_spacing, height_pixels_at_spacing)
 

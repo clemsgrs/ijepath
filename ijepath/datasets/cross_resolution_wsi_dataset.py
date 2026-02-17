@@ -299,7 +299,7 @@ class CrossResolutionWSIDataset(IterableDataset):
             1,
             int(round(context_size_requested_px * self.context_effective_mpp / mask_source_mpp)),
         )
-        mask_patch = reader.get_patch_by_center_level0(
+        mask_patch = reader.get_patch_by_center(
             center_x_level0=center_x_level0,
             center_y_level0=center_y_level0,
             width_pixels_at_spacing=mask_source_size_px,
@@ -493,7 +493,7 @@ class CrossResolutionWSIDataset(IterableDataset):
         )
         target_margin_context_px = min(target_margin_context_px, max(1, context_size_requested_px // 2 - 1))
 
-        context_patch = reader.get_patch_by_center_level0(
+        context_patch = reader.get_patch_by_center(
             center_x_level0=center_x_level0,
             center_y_level0=center_y_level0,
             width_pixels_at_spacing=context_source_size_px,
@@ -547,7 +547,7 @@ class CrossResolutionWSIDataset(IterableDataset):
             target_center_x_level0 = int(round(context_x0_level0 + cx_context * scale_context_px_to_level0))
             target_center_y_level0 = int(round(context_y0_level0 + cy_context * scale_context_px_to_level0))
 
-            target_patch = reader.get_patch_by_center_level0(
+            target_patch = reader.get_patch_by_center(
                 center_x_level0=target_center_x_level0,
                 center_y_level0=target_center_y_level0,
                 width_pixels_at_spacing=target_source_size_px,
