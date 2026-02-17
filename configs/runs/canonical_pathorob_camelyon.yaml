@@ -2,12 +2,13 @@ pretraining:
   mode: canonical
 
 data:
-  slide_manifest_csv: /data/pathology/projects/clement/discern/multi-center-prostate.csv
-  slide_metadata_parquet: data/3-center-prostate/indexes/slide_metadata.parquet
-  anchor_catalog_manifest: data/3-center-prostate/indexes/anchor_catalog_manifest.json
-  batch_size_per_gpu: 32
+  slide_manifest_csv:
+  slide_metadata_parquet:
+  anchor_catalog_manifest:
+  batch_size_per_gpu: 64
   num_workers: 16
-  anchor_stream_batch_size: 2048
+  anchor_stream_batch_size: 4096
+  max_open_slides_per_worker: 32
 
 canonical:
   input_mpp: 0.5
@@ -38,10 +39,14 @@ optimization:
   final_weight_decay: 0.1
   ema: [0.996, 1.0]
 
+training:
+  log_every: 10000
+  save_every: 10000
+
 tuning:
   enable: true
   seed: 0
-  tune_every: 10000
+  tune_every: 100000
   run_baseline_at_zero: true
   execution:
     mode: async
@@ -50,7 +55,7 @@ tuning:
     coalesce_policy: newest
     poll_every_steps: auto
     fail_on_backlog: false
-    keep_last_n_snapshots: 2
+    keep_last_n_snapshots: ${tuning.execution.max_pending_jobs}
   data_dir: /data/pathology/projects/clement/discern/data/eval
   plugins:
     - type: pathorob
@@ -68,16 +73,21 @@ tuning:
       datasets:
         camelyon:
           enable: true
-          manifest_csv: ${tuning.data_dir}/pathorob/camelyon/benchmark.csv
+          manifest_csv: ${tuning.data_dir}/pathorob/camelyon/manifest.csv
           id_centers: ["RUMC", "UMCU"]
           ood_centers: ["CWZ", "RST", "LPON"]
+        prostate-shift-binary:
+          enable: false
+          manifest_csv: ${tuning.data_dir}/prostate-shift-binary/manifest.csv
+          id_centers: ["BIDMC"]
+          ood_centers: ["BWH", "MGH", "NYU", "UCLA", "UPENN", "VUMC"]
       ri:
         enable: true
         every_n_evals: 1
         k_candidates: [3, 5, 7, 10, 15]
       apd:
         enable: true
-        every_n_evals: 5
+        every_n_evals: 1
         mode: custom
         correlation_levels: [0.0, 0.14, 0.29, 0.43, 0.57, 0.71, 0.86, 1.0]
         repetitions: 3
@@ -99,10 +109,6 @@ tuning:
     stop_training: false
     save_best_checkpoint: true
     best_checkpoint_name: best-robustness.pth.tar
-
-training:
-  log_every: 10000
-  save_every: 10000
 
 output:
   root: outputs

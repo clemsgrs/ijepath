@@ -156,7 +156,7 @@ class CanonicalWSIDataset(CrossResolutionWSIDataset):
             int(round(float(self.source_tile_size_px) * float(self.input_mpp) / float(source_mpp))),
         )
 
-        tile = reader.get_patch_by_center_level0(
+        tile = reader.get_patch_by_center(
             center_x_level0=center_x_level0,
             center_y_level0=center_y_level0,
             width_pixels_at_spacing=source_size_px_at_spacing,

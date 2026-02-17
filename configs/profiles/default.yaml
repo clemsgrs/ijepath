@@ -17,4 +17,5 @@ target_margin_um: 16.0  # Default profile value used by indexing.
 
 # Spacing matching and deterministic behavior.
 spacing_tolerance: 0.05  # Default in defaults.yaml (shared with training data.spacing_tolerance).
+downsample: 16 # decides at which downsample factor to compute tissue coverage, w.r.t wsi level 0
 seed: 0  # Default profile/indexing seed.

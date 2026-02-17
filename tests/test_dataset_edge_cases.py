@@ -126,7 +126,7 @@ def test_reader_patch_shape_is_stable_at_border():
         pytest.skip("WSI test data is not available")
 
     reader = WholeSlideDataReaderAdapter(wsi_path=str(wsi_path), backend="asap")
-    patch = reader.get_patch_by_center_level0(
+    patch = reader.get_patch_by_center(
         center_x_level0=8,
         center_y_level0=8,
         width_pixels_at_spacing=512,

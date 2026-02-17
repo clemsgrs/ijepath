@@ -261,7 +261,7 @@ class PathoROBPlugin(BenchmarkPlugin):
                     saved_cache_params = json.loads(cache_metadata_file.read_text(encoding="utf-8"))
                     if saved_cache_params == current_params_with_manifest:
                         split_dir.mkdir(parents=True, exist_ok=True)
-                        shutil.copytree(cache_dataset_dir, split_dir, dirs_exist_ok=True)
+                        shutil.copytree(cache_dataset_dir, split_dir, dirs_exist_ok=True, copy_function=shutil.copy)
                         metadata_file.write_text(
                             json.dumps(current_params_with_manifest, indent=2),
                             encoding="utf-8",
@@ -291,13 +291,16 @@ class PathoROBPlugin(BenchmarkPlugin):
             split_dir.mkdir(parents=True, exist_ok=True)
             metadata_file.write_text(json.dumps(current_params_with_manifest, indent=2), encoding="utf-8")
             if cache_dataset_dir is not None:
-                cache_key_dir = cache_dataset_dir.parent
-                cache_key_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(split_dir, cache_dataset_dir, dirs_exist_ok=True)
-                (cache_key_dir / "split_params.json").write_text(
-                    json.dumps(current_params_with_manifest, indent=2),
-                    encoding="utf-8",
-                )
+                try:
+                    cache_key_dir = cache_dataset_dir.parent
+                    cache_key_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(split_dir, cache_dataset_dir, dirs_exist_ok=True, copy_function=shutil.copy)
+                    (cache_key_dir / "split_params.json").write_text(
+                        json.dumps(current_params_with_manifest, indent=2),
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    logger.warning("[APD] Failed to write shared split cache for %s; continuing without caching", dataset_name)
 
         self._apd_split_cache[dataset_name] = splits
         return splits

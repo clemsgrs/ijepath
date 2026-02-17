@@ -223,7 +223,7 @@ class CrossResolutionWSIDataset(IterableDataset):
         image = (image - IMAGENET_MEAN[None, None, :]) / IMAGENET_STD[None, None, :]
         return torch.from_numpy(image).permute(2, 0, 1).contiguous()
 
-    def _choose_source_spacing(self, spacings: list[float], requested_mpp: float) -> tuple[float, str]:
+    def _choose_source_spacing(self, spacings: list[float], requested_mpp: float, allow_coarser: bool = False) -> tuple[float, str]:
         if not spacings:
             raise ValueError("Slide does not expose any pyramid spacing")
         sorted_spacings = sorted(float(s) for s in spacings)
@@ -236,12 +236,13 @@ class CrossResolutionWSIDataset(IterableDataset):
         finer = [s for s in sorted_spacings if s < requested_mpp]
         if finer:
             return max(finer), "fallback_from_finer"
-
-        coarser = [s for s in sorted_spacings if s > requested_mpp]
-        if coarser:
-            return min(coarser), "fallback_from_coarser"
-
-        return nearest, "fallback_nearest"
+        
+        elif allow_coarser:
+            coarser = [s for s in sorted_spacings if s > requested_mpp]
+            if coarser:
+                return min(coarser), "fallback_from_coarser"
+        else:
+            raise ValueError(f"No available spacing close to or finer than requested mpp={requested_mpp} with tolerance {self.spacing_tolerance}")
 
     def _get_resolution_plan(self, slide_id: str, reader: WholeSlideDataReaderAdapter) -> dict:
         if slide_id in self._resolution_plan_cache:
@@ -294,12 +295,13 @@ class CrossResolutionWSIDataset(IterableDataset):
         mask_source_mpp, _ = self._choose_source_spacing(
             spacings=reader.mask_spacings,
             requested_mpp=self.context_effective_mpp,
+            allow_coarser=True,
         )
         mask_source_size_px = max(
             1,
             int(round(context_size_requested_px * self.context_effective_mpp / mask_source_mpp)),
         )
-        mask_patch = reader.get_patch_by_center_level0(
+        mask_patch = reader.get_patch_by_center(
             center_x_level0=center_x_level0,
             center_y_level0=center_y_level0,
             width_pixels_at_spacing=mask_source_size_px,
@@ -493,7 +495,7 @@ class CrossResolutionWSIDataset(IterableDataset):
         )
         target_margin_context_px = min(target_margin_context_px, max(1, context_size_requested_px // 2 - 1))
 
-        context_patch = reader.get_patch_by_center_level0(
+        context_patch = reader.get_patch_by_center(
             center_x_level0=center_x_level0,
             center_y_level0=center_y_level0,
             width_pixels_at_spacing=context_source_size_px,
@@ -547,7 +549,7 @@ class CrossResolutionWSIDataset(IterableDataset):
             target_center_x_level0 = int(round(context_x0_level0 + cx_context * scale_context_px_to_level0))
             target_center_y_level0 = int(round(context_y0_level0 + cy_context * scale_context_px_to_level0))
 
-            target_patch = reader.get_patch_by_center_level0(
+            target_patch = reader.get_patch_by_center(
                 center_x_level0=target_center_x_level0,
                 center_y_level0=target_center_y_level0,
                 width_pixels_at_spacing=target_source_size_px,

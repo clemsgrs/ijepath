@@ -7,4 +7,5 @@ min_tissue_fraction: 0.2  # Minimum whole-context tissue fraction for anchor val
 anchor_overlap_fraction: 0.5  # Overlap between neighboring context windows (0=no overlap, 0.5=50% overlap).
 target_margin_um: 16  # Minimum distance from context border for target centers (converted using context_mpp).
 spacing_tolerance: 0.05  # Relative tolerance for near-native spacing matching.
+downsample: 16  # Downsample factor at which to compute tissue coverage for indexing (w.r.t. wsi level 0).
 seed: 0  # Seed for deterministic indexing/sampling where applicable.

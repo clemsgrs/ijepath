@@ -193,6 +193,7 @@ def _process_slide_worker(
     anchor_overlap_fraction = float(profile["anchor_overlap_fraction"])
     target_margin_um = float(profile["target_margin_um"])
     spacing_tolerance = float(profile["spacing_tolerance"])
+    downsample = int(profile["downsample"])
     profile_id = str(profile["profile_id"])
 
     context_size_px = int(round(context_fov_um / context_mpp))
@@ -214,6 +215,12 @@ def _process_slide_worker(
         backend=backend,
     )
 
+    downsample_level = adapter.get_best_level_for_downsample_custom(downsample)
+    downsample_spacing = adapter.wsi_spacings[downsample_level]
+    mask_level, _ = adapter.get_best_level_for_spacing(downsample_spacing, tolerance=spacing_tolerance, use_mask=True)
+    mask_spacing = adapter.mask_spacings[mask_level]
+    context_size_mask_px_at_spacing = max(1, int(round(context_fov_um / mask_spacing)))
+     
     mask_spacing0 = float(slide["mask_level0_spacing_mpp"])
     mask_w = int(slide["mask_level0_width"])
     mask_h = int(slide["mask_level0_height"])
@@ -260,12 +267,12 @@ def _process_slide_worker(
             if x0 < 0 or y0 < 0 or x1 > mask_w or y1 > mask_h:
                 continue
 
-            mask_patch = adapter.get_patch_by_center_level0(
+            mask_patch = adapter.get_patch_by_center(
                 center_x_level0=int(cx_mask),
                 center_y_level0=int(cy_mask),
-                width_pixels_at_spacing=context_size_mask_px,
-                height_pixels_at_spacing=context_size_mask_px,
-                spacing_mpp=mask_spacing0,
+                width_pixels_at_spacing=context_size_mask_px_at_spacing,
+                height_pixels_at_spacing=context_size_mask_px_at_spacing,
+                spacing_mpp=mask_spacing,
                 use_mask=True,
             )
             tissue_fraction = compute_tissue_fraction(mask_patch)
