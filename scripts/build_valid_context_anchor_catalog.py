@@ -94,6 +94,7 @@ def load_profile(path: Path):
         "anchor_overlap_fraction",
         "target_margin_um",
         "spacing_tolerance",
+        "downsample",
     ]
     for key in required_keys:
         if key not in profile:
@@ -105,6 +106,9 @@ def load_profile(path: Path):
     stride_fraction = 1.0 - float(overlap)
     if float(stride_fraction) <= 0.0:
         raise ValueError("Derived anchor stride fraction must be > 0")
+    downsample = int(profile["downsample"])
+    if downsample <= 0:
+        raise ValueError("downsample must be > 0")
 
     profile["profile_id"] = derive_profile_id(
         context_mpp=float(profile["context_mpp"]),

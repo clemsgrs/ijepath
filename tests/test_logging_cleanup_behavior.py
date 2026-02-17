@@ -603,6 +603,7 @@ def test_orchestrate_pipeline_artifacts_runs_both_build_stages(monkeypatch, tmp_
                 "anchor_overlap_fraction: 0.5",
                 "target_margin_um: 16",
                 "spacing_tolerance: 0.05",
+                "downsample: 16",
             ]
         ),
         encoding="utf-8",
@@ -653,6 +654,7 @@ def test_orchestrate_pipeline_artifacts_skips_both_stages_on_cache_hit(monkeypat
                 "anchor_overlap_fraction: 0.5",
                 "target_margin_um: 16",
                 "spacing_tolerance: 0.05",
+                "downsample: 16",
             ]
         ),
         encoding="utf-8",
@@ -706,6 +708,7 @@ def test_orchestrate_pipeline_artifacts_force_rebuild_ignores_cache(monkeypatch,
                 "anchor_overlap_fraction: 0.5",
                 "target_margin_um: 16",
                 "spacing_tolerance: 0.05",
+                "downsample: 16",
             ]
         ),
         encoding="utf-8",

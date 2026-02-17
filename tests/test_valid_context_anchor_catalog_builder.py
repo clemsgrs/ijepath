@@ -72,6 +72,7 @@ def test_pathology_valid_context_anchor_catalog_builder_smoke(tmp_path):
                 "anchor_overlap_fraction: 0.5",
                 "target_margin_um: 16.0",
                 "spacing_tolerance: 0.05",
+                "downsample: 16",
                 "seed: 0",
             ]
         ),
@@ -130,6 +131,7 @@ def test_anchor_builder_rejects_legacy_anchor_stride_key(tmp_path: Path):
                 "anchor_stride_fraction: 0.5",
                 "target_margin_um: 16.0",
                 "spacing_tolerance: 0.05",
+                "downsample: 16",
                 "seed: 0",
             ]
         ),
@@ -154,6 +156,7 @@ def test_load_profile_derives_canonical_profile_id(tmp_path: Path):
                 "anchor_overlap_fraction: 0.5",
                 "target_margin_um: 16.0",
                 "spacing_tolerance: 0.05",
+                "downsample: 16",
                 "seed: 0",
             ]
         ),
@@ -179,6 +182,7 @@ def test_load_profile_ignores_explicit_profile_id(tmp_path: Path):
                 "anchor_overlap_fraction: 0.5",
                 "target_margin_um: 16.0",
                 "spacing_tolerance: 0.05",
+                "downsample: 16",
                 "seed: 0",
             ]
         ),
@@ -187,3 +191,27 @@ def test_load_profile_ignores_explicit_profile_id(tmp_path: Path):
 
     loaded = _MOD.load_profile(profile_yaml)
     assert loaded["profile_id"] == "crossres_1mpp_0p5mpp_512_128"
+
+
+def test_load_profile_requires_downsample(tmp_path: Path):
+    profile_yaml = tmp_path / "profile_missing_downsample.yaml"
+    profile_yaml.write_text(
+        "\n".join(
+            [
+                "context_mpp: 1.0",
+                "target_mpp: 0.5",
+                "context_fov_um: 512",
+                "target_fov_um: 128",
+                "targets_per_context: 4",
+                "min_tissue_fraction: 0.2",
+                "anchor_overlap_fraction: 0.5",
+                "target_margin_um: 16.0",
+                "spacing_tolerance: 0.05",
+                "seed: 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Missing required profile key: downsample"):
+        _MOD.load_profile(profile_yaml)
