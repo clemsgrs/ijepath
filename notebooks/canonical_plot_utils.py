@@ -143,8 +143,8 @@ def visualize_sample(
     if record_check_fn is not None:
         record_check_fn(
             'Anchor tissue fraction matches readback',
-            abs(tissue_pct - float(anchor_row['tissue_fraction'])) < 0.05,
-            f'{tissue_pct:.5f} vs anchor_row0={anchor_row["tissue_fraction"]:.5f}',
+            tissue_pct == float(anchor_row['tissue_fraction']),
+            f'{tissue_pct:.4f} vs expected {anchor_row["tissue_fraction"]:.4f}',
         )
         record_check_fn(
             'Source tile size correct',
@@ -260,8 +260,8 @@ def visualize_batch(
         if record_check_fn is not None:
             record_check_fn(
                 'Anchor tissue fraction matches readback',
-                abs(tissue_pct - anchor_tf) / anchor_tf < 0.05 if anchor_tf > 0 else tissue_pct < 0.05,
-                f'{tissue_pct:.5f} vs anchor_row={anchor_tf:.5f}',
+                tissue_pct == float(anchor_row['tissue_fraction']),
+                f'{tissue_pct:.4f} vs expected {anchor_row["tissue_fraction"]:.4f}',
             )
             record_check_fn(
                 'Source tile size correct',
